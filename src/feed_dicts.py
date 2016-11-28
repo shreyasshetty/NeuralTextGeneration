@@ -7,8 +7,8 @@ def placeholder_inputs(batch_size, ct_size, zp_size, zm_size, gf_size, gw_size, 
 	gf_pl = tf.placeholder(tf.int32, shape=(batch_size, gf_size))
 	gw_pl = tf.placeholder(tf.int32, shape=(batch_size,gw_size))
 	next_pl = tf.placeholder(tf.int32, shape=(batch_size))
-	projection_pl = tf.placeholder(tf.int32, shape=(projection_size, None))
-	tword_pl = tf.placeholder(tf.int32, shape=(None, copy_size))
+	projection_pl = tf.placeholder(tf.float32, shape=(projection_size, None))
+	copy_pl = tf.placeholder(tf.int32, shape=(None, copy_size))
 
 	return context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl
 

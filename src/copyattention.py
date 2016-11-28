@@ -201,6 +201,9 @@ class CopyAttention(object):
 		Returns:
 			The computed logits. Size: [batch_size, nW]
 		"""
+		word_max_fields = self.word_max_fields
+		d = self.d
+		nhu = self.nhu	
 
 		x_ct = self.generate_x_ct(context, zp, zm, gf, gw, batch_size) 
 
@@ -209,17 +212,20 @@ class CopyAttention(object):
 
 		num_words = tf.shape(copy)[0]
 		copy_lookup = tf.reshape(tf.nn.embedding_lookup(self.F_ji, copy), (num_words*word_max_fields,d))
-		q_w_mat = tf.nn.xw_plus_b(copy_lookup, self.W_4, self.b_4)
-		q_w = tf.reduce_max(tf.reshape(q_w_mat, (num_words, word_max_fields, d), reduction_indices=[1]))	
-		copy_score = tf.matmul(projection, tf.matmul(q_w, h_ct))
+		q_w_mat = tf.reshape(tf.nn.xw_plus_b(copy_lookup, self.W_4, self.b_4), (num_words, word_max_fields, nhu))
+		q_w = tf.reduce_max(q_w_mat, reduction_indices=[1])	
+		copy_score = tf.matmul(tf.matmul(h_ct, tf.transpose(q_w)), tf.transpose(projection))
 
 		phi_out = tf.nn.xw_plus_b(h_ct, self.W_out, self.b_out)
 		nw = tf.shape(phi_out)[1]
-		total = tf.shape(copy_score)[0]
-		pad = tf.zeros()
+		total = tf.shape(copy_score)[1]
+		pad = tf.zeros([batch_size, total - nw])
+		phi = tf.concat(1, (phi_out, pad))
+
+		logits = tf.add(copy_score, phi)
 
 	
-		logits = tf.nn.xw_plus_b(h_ct, self.W_out, self.b_out)
+		#logits = tf.nn.xw_plus_b(h_ct, self.W_out, self.b_out)
 		predictions = tf.argmax(logits, 1)
 		return logits
 
