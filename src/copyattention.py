@@ -2,7 +2,7 @@ import tensorflow as tf
 import numpy as np 
 
 # TODO: Implement HPCA embedding
-#from input_data import get_hpca_embeddings
+from input_data import gethpcaembeddings
 
 class CopyAttention(object):
 	"""CopyAttention model defined as an object.
@@ -48,6 +48,8 @@ class CopyAttention(object):
 		with tf.name_scope('embeddings'):
 			# TODO: change the initialization of word embeddings to use
 			# HPCA embeddings
+			embed, _, _ = gethpcaembeddings('../embeddings', nW)
+			self.W = tf.Variable(embed, trainable=True)
 			self.W = tf.get_variable("word_embedding", shape=[nW,d], initializer=tf.contrib.layers.xavier_initializer())
 
             # qprime embeddings

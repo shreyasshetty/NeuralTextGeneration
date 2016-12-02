@@ -43,7 +43,7 @@ def preprocess_input_files(dataset):
 						sent_r.readline()
 						num_written = num_written + 1
 
-def create_dataset(data_dir, dataset, batch_size):
+def create_dataset_o(data_dir, dataset, batch_size):
 	"""
 	Create a (x,y) pair of x as input sentence and
 	y as the index of the table. The resultant
@@ -136,6 +136,27 @@ def build_vocab(filename, k, idx_path):
 	#print("Min class :%d" %(min_class))
 	# END OF TEST code
 	return word2idx, idx2word
+
+def gethpcaembeddings(embed_path, k=20000):
+	embeddings = np.genfromtxt(os.path.join(embed_path, 'embeddings.txt'))
+	unk_start = np.random.random((2,64))
+	embed = np.vstack((unk_start, embeddings))[:k]
+	assert(embed.shape == (k, 64))
+	with open(os.path.join(embed_path, 'vocabulary.txt'),'r') as vocab:
+		words_freq = vocab.readlines()	
+	
+	words = map(lambda x: x.strip().split()[0], words_freq)
+	words = ['UNK', 'START'] + words[:k-2]
+	assert(len(words) == k)
+
+	word2idx = dict()
+	for word in words:
+		word2idx[word] = len(word2idx)
+	
+	assert(max(word2idx.values()) == k-1)
+	idx2word = dict(zip(word2idx.values(), word2idx.keys()))
+
+	return embed, word2idx, idx2word
 
 def qword_vocab(filename, k, idx_path):
 	q2idx_path = os.path.join(idx_path, 'qword2idx.p')
@@ -572,7 +593,7 @@ def create_dataset(data_dir, dataset, n, batch_size):
 				data_y.write(str(current_idx) + '\n')
 			current_idx += 1
 
-def setup(data_dir, n, batch_size, nW, min_field_freq, nQ):
+def setup(data_dir, embed_dir, n, batch_size, nW, min_field_freq, nQ):
 	""" A function which prepares all the indexes and other needed 
 	preliminaries to run the program.
 	Run once in main() in the train file.
@@ -590,7 +611,8 @@ def setup(data_dir, n, batch_size, nW, min_field_freq, nQ):
 		create_dataset(data_dir,'valid', n, batch_size) 
 	
 	wpath = os.path.join(data_dir, 'train', 'train_in.sent')
-	word2idx, idx2word = build_vocab(wpath, nW, '../index')
+	#word2idx, idx2word = build_vocab(wpath, nW, '../index')
+	_, word2idx, idx2word = gethpcaembeddings(embed_dir, nW) 
 	fqpath = os.path.join(data_dir, 'train', 'train.box')
 	field2idx, idx2field, nF = field_vocab(fqpath, min_field_freq, '../index')
 	qword2idx, idx2qword = qword_vocab(fqpath, nQ, '../index')
@@ -652,6 +674,9 @@ class DataSet(object):
 	
 	def reset_context(self):
 		self._context = ['START'] * (self._n - 1)
+
+	def num_infoboxes(self):
+		return len(self._tables)
 
 	def next_batch(self, pos):
 		idx = self._sequence[pos]
@@ -717,8 +742,8 @@ class DataSet(object):
 
 		return ct, z_plus, z_minus, global_field, global_word, labels, copy, copy_projection_matrix
 
-	def next_single(self, previous_pred):
-		table = self._tables[1]	
+	def next_single(self, pos, previous_pred):
+		table = self._tables[pos]
 		if previous_pred in self._idx2word:
 			self._context = self._context[1:] + [self._idx2word[previous_pred]]
 		else:

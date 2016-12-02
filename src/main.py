@@ -75,7 +75,7 @@ def main(_):
 	
 	# Generate the indexes
 	word2idx, idx2word, field2idx, idx2field, nF, qword2idx, idx2qword, max_words_in_table = \
-		setup(FLAGS.data_dir, FLAGS.n, FLAGS.batch_size, FLAGS.nW, FLAGS.min_field_freq, FLAGS.nQ)
+		setup(FLAGS.data_dir, '../embeddings', FLAGS.n, FLAGS.batch_size, FLAGS.nW, FLAGS.min_field_freq, FLAGS.nQ)
 
 	# Create the dataset objects
 	train_dataset = DataSet(FLAGS.data_dir,'train',FLAGS.n, FLAGS.nW, nF, \
@@ -133,6 +133,7 @@ def main(_):
 	
 		# Initialize the variables and start the session	
 		init = tf.initialize_all_variables()
+		saver = tf.train.Saver()
 		sess = tf.Session()
 		sess.run(init)
 
@@ -148,16 +149,16 @@ def main(_):
 
 				if (i != 0 and i % FLAGS.valid_every == 0):
 					print("Validation starting")
-					total_ex, correct = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
-					print("Total examples: %d\tNum of correct predictions: %d" %(total_ex, correct))
+					valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
+					print("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
 
-				if (i != 0 and i % FLAGS.test_every == 0):
+				if (i != 0 and i % FLAGS.sample_every == 0):
 					test_dataset.reset_context()
 					pos = 0
 					prev_predict = word2idx['START']
 					while (pos != 1):
-						with open('./results.txt','a') as exp:
-							feed_dict_t = fill_feed_dict_single(test_dataset,prev_predict, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
+						with open(os.path.join(expt_result_path, 'results.txt'),'a') as exp:
+							feed_dict_t = fill_feed_dict_single(test_dataset,prev_predict, 0, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
 							prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
 							prev = prev_predict[0][0][0]
 							if prev in idx2word:
@@ -170,6 +171,39 @@ def main(_):
 							prev_predict = prev
 	
 			duration = time.time() - start
+
+			print("Validation starting")
+			valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
+			print("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
+			with open(os.path.join(expt_result_path, str(i)+'_valid_loss'), 'w') as valid_loss_f:
+				valid_loss_f.write("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
+
+			checkpoint_file = os.path.join(chkpt_result_path, str(i) + '_checkpoint')
+			saver.save(sess, checkpoint_file)
+
+			print("Generating sentences for test dataset")
+			start = time.time()
+			num_test_boxes = test_dataset.num_infoboxes()
+			test_sentences = os.path.join(expt_result_path, str(i) + '_sentences.txt')
+			with open(test_sentences, 'a') as gen_sent:
+				for k in range(num_test_boxes):
+					pos = 0
+					prev_predict = word2idx['START']
+					test_dataset.reset_context()
+					while(pos != 1):
+						feed_dict_t = fill_feed_dict_single(test_dataset,prev_predict, k, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
+						prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
+						prev = prev_predict[0][0][0]
+						if prev in idx2word:
+							gen_sent.write(idx2word[prev] + ' ')
+						else:
+							gen_sent.write('UNK ')
+						if prev == word2idx['.']:
+							pos = 1
+							gen_sent.write('\n')
+						prev_predict = prev
+			duration = time.time() - start
+			print("Time taken to generate test sentences: %0.3f" %(duration))
 			print("Time taken for epoch : %d is %0.3f minutes" %(epoch, duration/60))
 	
 if __name__ == "__main__":
