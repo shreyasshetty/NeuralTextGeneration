@@ -147,11 +147,6 @@ def main(_):
 				if (i % FLAGS.print_every == 0):	
 					print("Epoch : %d\tStep : %d\tLoss : %0.3f" %(epoch, i, loss_value))	
 
-				if (i != 0 and i % FLAGS.valid_every == 0):
-					print("Validation starting")
-					valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
-					print("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
-
 				if (i != 0 and i % FLAGS.sample_every == 0):
 					test_dataset.reset_context()
 					pos = 0
