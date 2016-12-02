@@ -139,7 +139,7 @@ def main(_):
 
 		for epoch in range(1, FLAGS.num_epochs + 1):
 			train_dataset.generate_permutation()		
-			start = time.time()
+			start_e = time.time()
 			for i in range(num_train_examples):
 				feed_dict = fill_feed_dict(train_dataset, i, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)	
 				_, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
@@ -170,11 +170,14 @@ def main(_):
 								exp.write('\n')
 							prev_predict = prev
 	
-			duration = time.time() - start
+			duration_e = time.time() - start
 
 			print("Validation starting")
+			start = time.time()
 			valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
+			duration = time.time() - start
 			print("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
+			print("Time taken for validating epoch %d : %0.3f" %(i, duration))
 			with open(os.path.join(expt_result_path, str(i)+'_valid_loss'), 'w') as valid_loss_f:
 				valid_loss_f.write("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
 
@@ -204,7 +207,7 @@ def main(_):
 						prev_predict = prev
 			duration = time.time() - start
 			print("Time taken to generate test sentences: %0.3f" %(duration))
-			print("Time taken for epoch : %d is %0.3f minutes" %(epoch, duration/60))
+			print("Time taken for epoch : %d is %0.3f minutes" %(epoch, duration_e/60))
 	
 if __name__ == "__main__":
 	tf.app.run()
