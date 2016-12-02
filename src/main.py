@@ -13,8 +13,9 @@ from input_data import setup
 
 from feed_dicts import placeholder_inputs
 from feed_dicts import fill_feed_dict
-#from input_data import local_context
-#from input_data import global_context
+from feed_dicts import placeholder_inputs_single
+from feed_dicts import fill_feed_dict_single
+from feed_dicts import do_eval
 
 flags = tf.app.flags
 # Model parameters
@@ -72,14 +73,30 @@ def main(_):
 		json.dump(flags.FLAGS.__flags, params_e)
 		json.dump(flags.FLAGS.__flags, params_c)
 	
+	# Generate the indexes
 	word2idx, idx2word, field2idx, idx2field, nF, qword2idx, idx2qword, max_words_in_table = \
-		setup(FLAGS.data_dir, FLAGS.nW, FLAGS.min_field_freq, FLAGS.nQ)
-	
+		setup(FLAGS.data_dir, FLAGS.n, FLAGS.batch_size, FLAGS.nW, FLAGS.min_field_freq, FLAGS.nQ)
+
+	# Create the dataset objects
 	train_dataset = DataSet(FLAGS.data_dir,'train',FLAGS.n, FLAGS.nW, nF, \
 							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
 							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
 							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
+	num_train_examples = train_dataset.num_examples()
+	
+	valid_dataset =  DataSet(FLAGS.data_dir,'valid',FLAGS.n, FLAGS.nW, nF, \
+							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
+							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
+	num_valid_examples = valid_dataset.num_examples()
 
+	test_dataset = DataSet(FLAGS.data_dir,'test',FLAGS.n, FLAGS.nW, nF, \
+							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
+							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
+
+	# The sizes of respective conditioning variables
+	# for placeholder generation
 	context_size = (FLAGS.n - 1)
 	zp_size = context_size * FLAGS.word_max_fields
 	zm_size = context_size * FLAGS.word_max_fields
@@ -88,34 +105,69 @@ def main(_):
 	copy_size = FLAGS.word_max_fields
 	projection_size = FLAGS.nW + max_words_in_table
 
+	# Generate the TensorFlow graph
 	with tf.Graph().as_default():
+
+		# Create the CopyAttention model
 		model = CopyAttention(FLAGS.n, FLAGS.d, FLAGS.g, FLAGS.nhu, FLAGS.nW, nF, FLAGS.nQ, \
 		                      FLAGS.nQpr, FLAGS.l, FLAGS.learning_rate, FLAGS.max_words, \
 							  FLAGS.max_fields, FLAGS.word_max_fields, FLAGS.batch_size)	
 
+		# Placeholders for train and validation
 		context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl = \
 			placeholder_inputs(FLAGS.batch_size, context_size, zp_size, zm_size, gf_size, gw_size, copy_size, projection_size)
-		
-		predict = model.inference(context_pl, zp_pl, zm_pl, gf_pl, gw_pl, copy_pl, projection_pl, FLAGS.batch_size)
+
+		# Placeholders for test
+		context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, copy_pl_t, projection_pl_t, next_pl_t = \
+			placeholder_inputs_single(context_size, zp_size, zm_size, gf_size, gw_size, copy_size, projection_size)
+
+		# Train and validation part of the model	
+		predict = model.inference(FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, copy_pl, projection_pl)
 		loss = model.loss(predict, next_pl)
 		train_op = model.train(loss)
+		evaluate = model.evaluate(predict, next_pl)
 
+		# Test component of the model
+		pred_single = model.inference(1, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, copy_pl_t, projection_pl_t)
+		predicted_label = model.predicted_label(pred_single)
+	
+		# Initialize the variables and start the session	
 		init = tf.initialize_all_variables()
 		sess = tf.Session()
-		
 		sess.run(init)
 
-		num_examples = train_dataset.num_examples()
-		
 		for epoch in range(1, FLAGS.num_epochs + 1):
-			train_dataset.generate_permuation()		
+			train_dataset.generate_permutation()		
 			start = time.time()
-			for i in range(num_examples):
-				feed_dict = fill_feed_dict(train_dataset, i, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl)	
+			for i in range(num_train_examples):
+				feed_dict = fill_feed_dict(train_dataset, i, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)	
 				_, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
 
 				if (i % FLAGS.print_every == 0):	
 					print("Epoch : %d\tStep : %d\tLoss : %0.3f" %(epoch, i, loss_value))	
+
+				if (i != 0 and i % FLAGS.valid_every == 0):
+					print("Validation starting")
+					total_ex, correct = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
+					print("Total examples: %d\tNum of correct predictions: %d" %(total_ex, correct))
+
+				if (i != 0 and i % FLAGS.test_every == 0):
+					test_dataset.reset_context()
+					pos = 0
+					prev_predict = word2idx['START']
+					while (pos != 1):
+						with open('./results.txt','a') as exp:
+							feed_dict_t = fill_feed_dict_single(test_dataset,prev_predict, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
+							prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
+							prev = prev_predict[0][0][0]
+							if prev in idx2word:
+								exp.write(idx2word[prev] + ' ')
+							else:
+								exp.write('UNK ')
+							if prev == word2idx['.']:
+								pos = 1
+								exp.write('\n')
+							prev_predict = prev
 	
 			duration = time.time() - start
 			print("Time taken for epoch : %d is %0.3f minutes" %(epoch, duration/60))

@@ -1,6 +1,7 @@
 import time
-import numpy as np
 import os
+import pickle
+import numpy as np
 from collections import Counter
 
 def preprocess_input_files(dataset):
@@ -42,7 +43,7 @@ def preprocess_input_files(dataset):
 						sent_r.readline()
 						num_written = num_written + 1
 
-def create_dataset(dataset, batch_size):
+def create_dataset(data_dir, dataset, batch_size):
 	"""
 	Create a (x,y) pair of x as input sentence and
 	y as the index of the table. The resultant
@@ -58,7 +59,6 @@ def create_dataset(dataset, batch_size):
 
 		Writes the following into dataset_x and dataset_y respectively
 	"""
-	data_dir = '../data'
 
 	with open(os.path.join(data_dir,dataset,'%s_in.sent' %(dataset))) as sent_file:
 		sentences = sent_file.readlines()
@@ -84,7 +84,16 @@ def create_dataset(dataset, batch_size):
 					data_y.write(str(current_idx) + '\n')
 				current_idx += 1
 	
-def build_vocab(filename, k):
+def build_vocab(filename, k, idx_path):
+	w2idx_path = os.path.join(idx_path, 'word2idx.p')
+	idx2w_path = os.path.join(idx_path, 'idx2word.p')
+	if os.path.isfile(w2idx_path) and os.path.isfile(idx2w_path):
+		print("Reading previously stored word indexes")
+		word2idx = pickle.load(open(w2idx_path, 'rb'))
+		idx2word = pickle.load(open(idx2w_path, 'rb'))
+		assert(max(word2idx.values()) == k - 1)
+		return word2idx, idx2word
+		
 	start = time.time()
 	with open(filename) as f:
 		words = [word for line in f.readlines() for word in line.split()]
@@ -117,6 +126,9 @@ def build_vocab(filename, k):
 	print("Building vocabulary for words in sentences")
 	print("%d words processed in %0.5f seconds" %(total_count,duration)) 
 	
+	print("Pickling the word indexes")
+	pickle.dump(word2idx, open(w2idx_path, 'wb'))
+	pickle.dump(idx2word, open(idx2w_path, 'wb'))
 	# TEST code:
 	#max_class = max(word2idx.values())
 	#print("Max num classes : %d" %(max_class))
@@ -125,7 +137,16 @@ def build_vocab(filename, k):
 	# END OF TEST code
 	return word2idx, idx2word
 
-def qword_vocab(filename, k):
+def qword_vocab(filename, k, idx_path):
+	q2idx_path = os.path.join(idx_path, 'qword2idx.p')
+	idx2q_path = os.path.join(idx_path, 'idx2qword.p')
+
+	if os.path.isfile(q2idx_path) and os.path.isfile(idx2q_path):
+		print("Reading saved indexes")
+		qword2idx = pickle.load(open(q2idx_path, 'rb'))
+		idx2qword = pickle.load(open(idx2q_path, 'rb'))
+		return qword2idx, idx2qword
+
 	start = time.time()
 	qwords = list()
 
@@ -154,6 +175,10 @@ def qword_vocab(filename, k):
 	duration = time.time() - start
 	print("Building vocabulary for words in infoboxes")
 	print("%d words processed in %0.5f seconds" %(total_count, duration))
+
+	print("Saving indexes")
+	pickle.dump(qword2idx, open(q2idx_path, 'wb'))
+	pickle.dump(idx2qword, open(idx2q_path, 'wb'))
 	return qword2idx, idx2qword
 
 def qprime_vocab(filename):
@@ -203,7 +228,17 @@ def field_name(field):
 			else:
 				return field, 0
 
-def field_vocab(filename, min_freq):
+def field_vocab(filename, min_freq, idx_path):
+	field_idx_file = os.path.join(idx_path, 'f2idx.p')
+	idx_field_file = os.path.join(idx_path, 'idx2f.p')
+	
+	if os.path.isfile(field_idx_file) and os.path.isfile(idx_field_file):
+		print("Loading saved indexes")
+		field2idx = pickle.load(open(field_idx_file, 'rb'))
+		idx2field = pickle.load(open(idx_field_file, 'rb'))
+		vocab_size = len(field2idx.keys())
+		return field2idx, idx2field, vocab_size
+
 	start = time.time()
 	fields = list() 
 	with open(filename) as f:
@@ -215,7 +250,7 @@ def field_vocab(filename, min_freq):
 		fields.append(name)
 	
 	total_count = len(fields)
-	counter = [['UNK', 0]]
+	counter = [['UNK', 0], ['START', 1]]
 	# Previous approach.
 	#counter.extend([list(item) for item in Counter(fields).most_common(k)])
 	# We use the fields that appear atleast 1000 time in the training data
@@ -235,6 +270,10 @@ def field_vocab(filename, min_freq):
 	duration = time.time() - start
 	print("Created field vocabulary")
 	print("%d words processed in %0.5f seconds" %(total_count,duration)) 
+
+	print("Saving the indexes")
+	pickle.dump(field2idx, open(field_idx_file, 'wb'))
+	pickle.dump(idx2field, open(idx_field_file, 'wb'))
 	return field2idx, idx2field, vocab_size
 
 def table_idx(table):
@@ -466,7 +505,7 @@ def project_copy_scores(max_table_words, nW, wq2idx, tableWords):
 	that projects copy scores into the output distribution.
 	"""
 	num_words_in_table = len(tableWords)
-	q_proj = np.zeros([(nW + max_table_words), num_words_in_table])
+	q_proj = np.zeros([(nW + max_table_words), num_words_in_table], dtype=float)
 	for i in range(num_words_in_table):
 		word = tableWords[i]
 		q_proj[wq2idx[word]][i] = 1
@@ -493,11 +532,13 @@ def getcopyaction(table, word_max_fields, field2idx):
 				tw.append(field2idx['UNK'] + pos)
 		if len(tw) < word_max_fields:
 			tw.extend([tw[0]]* (word_max_fields - len(tw)))
+		if len(tw) > word_max_fields:
+			tw = tw[:word_max_fields]
 		assert(len(tw) == word_max_fields)
 		copy.append(tw)
 	return copy
 
-def create_dataset(dataset, n, batch_size):
+def create_dataset(data_dir, dataset, n, batch_size):
 	"""	Create a (x,y) pair of x as input sentence and
 	y as the index of the table. The resultant
 	(x,y) pairs have a property that len(x) <= batch_size.
@@ -510,7 +551,6 @@ def create_dataset(dataset, n, batch_size):
 			("This is the house of", 5)
 			("the prime minister", 5)
 	"""
-	data_dir = '../data'
 
 	with open(os.path.join(data_dir,dataset,'%s_in.sent' %(dataset))) as sent_file:
 		sentences = sent_file.readlines()
@@ -543,11 +583,17 @@ def setup(data_dir, n, batch_size, nW, min_field_freq, nQ):
 	
 	train_x = os.path.join(data_dir, 'train', 'train_x')
 	if not os.path.isfile(train_x):
-		create_dataset('train', n, batch_size) 
+		create_dataset(data_dir,'train', n, batch_size) 
+
+	valid_x = os.path.join(data_dir, 'valid', 'valid_x')
+	if not os.path.isfile(valid_x):
+		create_dataset(data_dir,'valid', n, batch_size) 
 	
-	word2idx, idx2word = build_vocab('../data/train/train_in.sent', nW)
-	field2idx, idx2field, nF = field_vocab('../data/train/train.box', min_field_freq)
-	qword2idx, idx2qword = qword_vocab('../data/train/train.box', nQ)
+	wpath = os.path.join(data_dir, 'train', 'train_in.sent')
+	word2idx, idx2word = build_vocab(wpath, nW, '../index')
+	fqpath = os.path.join(data_dir, 'train', 'train.box')
+	field2idx, idx2field, nF = field_vocab(fqpath, min_field_freq, '../index')
+	qword2idx, idx2qword = qword_vocab(fqpath, nQ, '../index')
 	
 	max_words_in_table = getmaxwordsintable(data_dir, 'train')
 
@@ -596,11 +642,16 @@ class DataSet(object):
 		self._num_examples = len(self._xs)
 		self._sequence = np.arange(self._num_examples)
 
-	def generate_permuation(self):
+		self._context = ['START'] * (self._n - 1)
+
+	def generate_permutation(self):
 		np.random.shuffle(self._sequence)
 
 	def num_examples(self):
 		return self._num_examples
+	
+	def reset_context(self):
+		self._context = ['START'] * (self._n - 1)
 
 	def next_batch(self, pos):
 		idx = self._sequence[pos]
@@ -612,8 +663,6 @@ class DataSet(object):
 		tablepos = self._ys[idx]
 		table = self._tables[tablepos]
 
-		#num_words = len(sentence.split())
-		#words = ['START'] * (self._n - 1)
 		# 'START' tokens already appended
 		words = sentence.split()
 		contexts = []
@@ -624,70 +673,8 @@ class DataSet(object):
 		z_minus = []
 
 		tablewords = table_words(table)
-		wq2idx = resize_index(word2idx, tablewords)
+		wq2idx = resize_index(self._word2idx, tablewords)
 		copy_projection_matrix = project_copy_scores(self._max_words_in_table, self._nW, wq2idx, tablewords)
-
-		while(len(words) >= self._n):
-			contexts.append(words[:self._n-1])
-			next_word.append(words[self._n-1])
-			words = words[1:]
-
-		assert(len(next_word) == len(contexts))
-
-		if (len(contexts) < self._batch_size):
-			contexts.extend([contexts[-1]] * (self._batch_size - len(contexts)))			
-			next_word.extend([next_word[-1]] * (self._batch_size - len(next_word)))
-
-		assert(len(contexts) == self._batch_size)
-		assert(len(next_word) == self._batch_size)
-
-		for context in contexts:
-			ctxt = []
-			for word in context:
-				if word in wq2idx:
-					ctxt.append(wq2idx[word])
-				else:
-					ctxt.append(wq2idx['UNK'])
-			ct.append(ctxt)
-
-		for word in next_word:
-			if word in wq2idx:
-				labels.append(wq2idx[word])
-			else:
-				labels.append(wq2idx['UNK'])
-
-		for context in contexts:
-			zp, zm = local_context(context, table, self._l, self._field2idx, self._word_max_fields)
-			z_plus.append(zp)
-			z_minus.append(zm)
-
-		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
-		global_field = [gf] * self._batch_size
-		global_word = [gw] * self._batch_size
-		copy = getcopyaction(table, self._word_max_fields, self._field2idx)
-
-		return ct, z_plus, z_minus, global_field, global_word, labels, copy, copy_projection_matrix
-
-	def next_batch_without_copy(self, pos):
-		idx = self._sequence[pos]
-
-		# Sentence for the current example
-		sentence = self._xs[idx]
-		
-		# index for the table in the current example
-		tableidx = self._ys[idx]
-		table = self._tables[tableidx]
-
-		#num_words = len(sentence.split())
-		#words = ['START'] * (self._n - 1)
-		# 'START' tokens already appended
-		words = sentence.split()
-		contexts = []
-		labels = []
-		ct = []
-		next_word = []
-		z_plus = []
-		z_minus = []
 
 		while(len(words) >= self._n):
 			contexts.append(words[:self._n-1])
@@ -713,10 +700,10 @@ class DataSet(object):
 			ct.append(ctxt)
 
 		for word in next_word:
-			if word in self._word2idx:
-				labels.append(self._word2idx[word])
+			if word in wq2idx:
+				labels.append(wq2idx[word])
 			else:
-				labels.append(self._word2idx['UNK'])
+				labels.append(wq2idx['UNK'])
 
 		for context in contexts:
 			zp, zm = local_context(context, table, self._l, self._field2idx, self._word_max_fields)
@@ -726,261 +713,31 @@ class DataSet(object):
 		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
 		global_field = [gf] * self._batch_size
 		global_word = [gw] * self._batch_size
+		copy = getcopyaction(table, self._word_max_fields, self._field2idx)
 
-		return ct, z_plus, z_minus, global_field, global_word, labels
-	
-	def next_single(self, previous):
-		if (previous == self._word2idx['.']):
-			return current_pos + 1
+		return ct, z_plus, z_minus, global_field, global_word, labels, copy, copy_projection_matrix
 
-		if (previous == self._word2idx['START']):
-			self._context = ['START'] * (self._n - 1)
+	def next_single(self, previous_pred):
+		table = self._tables[1]	
+		if previous_pred in self._idx2word:
+			self._context = self._context[1:] + [self._idx2word[previous_pred]]
 		else:
-			self._context = self._context[1:].append(self._idx2word[previous])
+			self._context = self._context[1:] + ['UNK']
 
-#class DataSet(object):
-#	
-#	def __init__(self, in_type, n, nW, nF, nQ, l, batch_size, 
-#				word2idx, idx2word, field2idx, idx2field, 
-#				qword2idx, idx2qword, max_words, max_fields, 
-#				word_max_fields):
-#		self._in_type = in_type
-#		self._batch_size = batch_size
-#		self._n = n
-#		self._l = l
-#		self._nW = nW
-#		self._nF = nF
-#		self._nQ = nQ
-#
-#		# Set up the indexes
-#		self._word2idx = word2idx
-#		self._idx2word = idx2word
-#		self._field2idx = field2idx
-#		self._idx2field = idx2field
-#		self._qword2idx = qword2idx
-#		self._idx2qword = idx2qword
-#		
-#		# Parameters for global and local contexts
-#		self._max_words = max_words  # Max. words in an infobox
-#		self._max_fields = max_fields # Max. fields in an infobox
-#		self._word_max_fields = word_max_fields # Max. words per field
-#
-#		# Variables for handling current sentence
-#		self._sent_ptr = 0
-#
-#		# Variables for handling sentences and contexts
-#		self._context_buffer = list()
-#		self._next_word_buffer = list()
-#		self._global_word_buffer = list()
-#		self._global_field_buffer = list()
-#		self._local_plus = list()
-#		self._local_minus = list()
-#
-#		box_path = '../data/%s/%s.box' %(in_type, in_type)
-#		sent_path = '../data/%s/%s_in.sent' %(in_type, in_type)
-#
-#		print("Creating DataSet object for %s data" %(in_type))
-#		print("Batch Size : %d" %(self._batch_size))
-#		with open(box_path,'r') as box_f:
-#			self._boxes = box_f.read().splitlines()
-#
-#		with open(sent_path,'r') as sent_f:
-#			self._sentences = sent_f.read().splitlines()
-#		print("Done Creating DataSet object for %s data" %(in_type))
-#
-#		self._num_examples = len(self._sentences)
-#
-#		# Used for validation.
-#		# Stores the current word predicted by the model.
-#		self._curr_context = []
-#		self._curr_predict = []
-#	
-#	def get_current_sent(self):
-#		return self._sent_ptr
-#		
-#	def generate_context(self, sentence, table):
-#		#if type(sentence) != list:
-#		#	words = sentence.split()
-#		#else:
-#		#	words = sentence
-#		words = (self._n - 1) * ['START']
-#		words.extend(sentence.split())
-#		contexts = list()
-#		word_context = list()
-#		z_plus = list()
-#		z_minus = list()
-#		next_word = list()
-#		y = list()
-#		while len(words) >= self._n:
-#			contexts.append(words[:self._n-1])
-#			next_word.append(words[self._n-1])
-#			words.pop(0)
-#		
-#		num_contexts = len(contexts)
-#
-#		for context in contexts:
-#			ctxt = list()
-#			for word in context:
-#				if word in self._word2idx:
-#					ctxt.append(self._word2idx[word])
-#				else:
-#					ctxt.append(self._word2idx['UNK'])
-#			word_context.append(ctxt)
-#
-#		assert(len(word_context) == num_contexts)
-#		#print word_context
-#		assert(len(word_context[0]) == self._n - 1)
-#
-#		for word in next_word:
-#			if word in self._word2idx:
-#				y.append(self._word2idx[word])
-#			else:
-#				y.append(self._word2idx['UNK'])
-#
-#		for context in contexts:
-#			zp, zm = local_context(context, table, self._l, self._field2idx, self._word_max_fields)
-#			z_plus.append(zp)
-#			z_minus.append(zm)
-#
-#		# Collect the global context for both field and word conditioning
-#		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
-#		# Replicate the global conditioning vectors
-#		global_field = num_contexts * [gf]
-#		global_word = num_contexts * [gw]
-#		return word_context, z_plus, z_minus, global_field, global_word, y
-#	
-#	def reset_sent_ptr(self):
-#		self._sent_ptr = 0
-#
-#	def next_batch(self):
-#		batch_size = self._batch_size	
-#
-#		if self._sent_ptr == self._num_examples:
-#			return None, None, None, None, None, None
-#
-#		while len(self._context_buffer) < batch_size:
-#			if len(self._sentences[self._sent_ptr].split()) >= self._n:
-#				ct, zp, zm, gf, gw, y = self.generate_context(self._sentences[self._sent_ptr],self._boxes[self._sent_ptr])
-#			else:
-#				self._sent_ptr += 1
-#				continue	
-#			self._context_buffer.extend(ct)
-#			self._next_word_buffer.extend(y)
-#			self._global_word_buffer.extend(gw)
-#			self._global_field_buffer.extend(gf)
-#			self._local_plus.extend(zp)
-#			self._local_minus.extend(zm)
-#			self._sent_ptr += 1
-#			if self._sent_ptr == self._num_examples:
-#				break
-#
-#		if len(self._context_buffer) < batch_size:
-#			return None, None, None, None, None, None
-#		
-#		# Extract batch size many examples to return
-#		context = self._context_buffer[:batch_size]
-#		next_word = self._next_word_buffer[:batch_size]
-#		global_word = self._global_word_buffer[:batch_size]
-#		global_field = self._global_field_buffer[:batch_size]
-#		local_plus = self._local_plus[:batch_size]
-#		local_minus = self._local_minus[:batch_size]
-#
-#		self._context_buffer = self._context_buffer[batch_size:]
-#		self._next_word_buffer = self._next_word_buffer[batch_size:]
-#		self._global_word_buffer = self._global_word_buffer[batch_size:]
-#		self._global_field_buffer = self._global_field_buffer[batch_size:]
-#		self._local_plus = self._local_plus[batch_size:]
-#		self._local_minus = self._local_minus[batch_size:]
-#		
-#		return np.array(context), np.array(local_plus), np.array(local_minus), np.array(global_field), np.array(global_word), np.array(next_word)
-#
-#	def next_valid(self, prev_prediction):
-#		#if prev_prediction == self._word2idx['.']:
-#		#	self._sent_ptr += 1
-#		#	self._curr_context = []
-#		#	return None 
-#		
-#		# Check if the prev_prediction was in the vocabulary
-#		# check written to ensure compatibility of input
-#		# to the next_valid function
-#		#assert(prev_prediction in self._word2idx)
-#
-#		#if not self._curr_context:
-#		#	self._curr_context = (self._n - 1 ) * ['START']
-#		#else:
-#			#self._curr_context.pop(0)
-#		#	self._curr_context = self._curr_context[1:]
-#		#	self._curr_context.append(self._idx2word[prev_prediction])
-#		self._curr_context = (self._n - 1) * ['START']
-#
-#		#sent = ''
-#		#for cword in self._curr_context:
-#		#	sent = sent + cword
-#		# Asserting if the context has (n-1) words
-#		assert(len(self._curr_context) == (self._n - 1))
-#
-#		context = []
-#		for word in self._curr_context:
-#			if word in self._word2idx:
-#				context.append(self._word2idx[word])
-#			else:
-#				context.append(self._word2idx['UNK'])
-#				
-#		table = self._boxes[self._sent_ptr]
-#		zp, zm = local_context(self._curr_context, table, self._l, self._field2idx, self._word_max_fields)
-#
-#		table = self._boxes[self._sent_ptr]	
-#		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
-#
-#		# NEED TO CHECK THIS
-#		nw = self._word2idx['UNK']		
-#
-#		print "Done with next_valid"
-#		return context, zp, zm, gf, gw, nw
-#
-#	def next_valid_orig(self, prev_prediction):
-#		if prev_prediction == self._word2idx['.']:
-#			self._sent_ptr += 1
-#			self._curr_context = []
-#			return None 
-#		
-#		# Check if the prev_prediction was in the vocabulary
-#		# check written to ensure compatibility of input
-#		# to the next_valid function
-#		#assert(prev_prediction in self._word2idx)
-#
-#		if not self._curr_context:
-#			self._curr_context = (self._n - 1 ) * ['START']
-#		else:
-#			#self._curr_context.pop(0)
-#			self._curr_context = self._curr_context[1:]
-#			self._curr_context.append(self._idx2word[prev_prediction])
-#
-#		#sent = ''
-#		#for cword in self._curr_context:
-#		#	sent = sent + cword
-#		print "Previous prediction"
-#		print prev_prediction
-#		print "Current context"
-#		print ' '.join(self._curr_context)
-#		# Asserting if the context has (n-1) words
-#		assert(len(self._curr_context) == (self._n - 1))
-#
-#		context = []
-#		for word in self._curr_context:
-#			if word in self._word2idx:
-#				context.append(self._word2idx[word])
-#			else:
-#				context.append(self._word2idx['UNK'])
-#				
-#		table = self._boxes[self._sent_ptr]
-#		zp, zm = local_context(self._curr_context, table, self._l, self._field2idx, self._word_max_fields)
-#
-#		table = self._boxes[self._sent_ptr]	
-#		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
-#
-#		# NEED TO CHECK THIS
-#		nw = self._word2idx['UNK']		
-#
-#		print "Done with next_valid"
-#		return context, zp, zm, gf, gw, nw
+		ct = []
+		for word in self._context:
+			if word in self._word2idx:
+				ct.append(self._word2idx[word])
+			else:
+				ct.append(self._word2idx['UNK'])
+		
+		tablewords = table_words(table)
+		wq2idx = resize_index(self._word2idx, tablewords)
+		projection_mat = project_copy_scores(self._max_words_in_table, self._nW, wq2idx, tablewords)
+		copy = getcopyaction(table, self._word_max_fields, self._field2idx)
+
+		zp, zm = local_context(self._context, table, self._l, self._field2idx, self._word_max_fields)
+
+		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
+		next_word = self._word2idx['UNK']
+		return ct, zp, zm, gf, gw, next_word, copy, projection_mat

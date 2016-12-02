@@ -32,7 +32,7 @@ class CopyAttention(object):
 		self.nW = nW
 		self.nF = nF
 		self.nQ = nQ
-                self.nQpr = nQpr
+        #self.nQpr = nQpr
 		self.l = l
 		self.lr = lr
 		self.max_words = max_words
@@ -48,23 +48,15 @@ class CopyAttention(object):
 		with tf.name_scope('embeddings'):
 			# TODO: change the initialization of word embeddings to use
 			# HPCA embeddings
-			# self.W = getHPCAEmbeddings()
-			#if init_hpca_embed:
-			#	self.W = tf.convert_to_tensor(get_hpca_embeddings())
-			#else:
-			#	self.W = tf.Variable(tf.random_normal([nW, d], stddev=0.01))
-			# nW+2  - 1. For 'UNK' 2. For 'START' symbol
-			#self.W = tf.Variable(tf.random_normal([nW+2, d])) #, stddev=0.01))
-			wrange = np.sqrt(6)/(nW + 2  + d)
-			self.W = tf.Variable(tf.random_uniform([nW+2, d], minval=-1*wrange, maxval=wrange), name='word_embedding', trainable=True) #, stddev=0.01))
+			self.W = tf.get_variable("word_embedding", shape=[nW,d], initializer=tf.contrib.layers.xavier_initializer())
 
             # qprime embeddings
-			qpr_range = np.sqrt(6)/(nQpr + d)
-			self.Qpr = tf.Variable(tf.random_uniform([nQpr, d], minval=-1*qpr_range, maxval= qpr_range), name='qpr_embedding', trainable=True)
+			#qpr_range = np.sqrt(6)/(nQpr + d)
+			#self.Qpr = tf.Variable(tf.random_uniform([nQpr, d], minval=-1*qpr_range, maxval= qpr_range), name='qpr_embedding', trainable=True)
 
             #qprime scoring function
-			w_score_range = np.sqrt(6)/(nhu + d)
-			self.W_score = tf.Variable(tf.random_uniform([nhu,d], minval = -1*w_score_range, maxval = w_score_range), name='wscoring', trainable=True)
+			#w_score_range = np.sqrt(6)/(nhu + d)
+			#self.W_score = tf.Variable(tf.random_uniform([nhu,d], minval = -1*w_score_range, maxval = w_score_range), name='wscoring', trainable=True)
 
 			# Local conditioning embedding flattened to a 2-D tensor
 			# Contiguous set of 2l rows correpond to a field
@@ -73,51 +65,37 @@ class CopyAttention(object):
 			# start(p) and end(n) embeddings for field i given by
 			# positions
 			#			i*2*l + p, i*2*l + l + n respectively
-			zrange = np.sqrt(6)/(l*(nF+1) + d)
-			self.Z_plus = tf.Variable(tf.random_uniform([l*(nF+1), d], minval=-1*zrange, maxval=zrange), name='zplus_embedding', trainable=True) #, stddev=0.01))
-			self.Z_minus = tf.Variable(tf.random_uniform([l*(nF+1), d], minval=-1*zrange, maxval=zrange), name='zminus_embedding', trainable=True) #, stddev=0.01))
+			self.Z_plus = tf.get_variable("zplus_embedding", shape=[l*nF, d], initializer=tf.contrib.layers.xavier_initializer())
+			self.Z_minus = tf.get_variable("zminus_embedding", shape=[l*nF, d], initializer=tf.contrib.layers.xavier_initializer()) 
 
 			# Global conditioning embeddings matrices
-			gfrange = np.sqrt(6)/(nF+1+g)
-			self.Gf = tf.Variable(tf.random_uniform([(nF+1), g], minval=-1*gfrange, maxval=gfrange), name='global_field_embedding', trainable=True)
+			self.Gf = tf.get_variable("global_field_embedding", shape=[nF, g], initializer=tf.contrib.layers.xavier_initializer())
+
 			# NOTE: Here we differ from the paper
 			#	   Section 4.1: Table embeddings
 			#	   We define Gw to be a matrix of dimension nQxg
 			#	   rather than nWxg to account for differences in
 			#	   vocabularies
-			#self.Gw = tf.Variable(tf.random_normal([(nQ+1), g], stddev=0.01))
-			gwrange = np.sqrt(6)/(nQ + 1 + g)
-			self.Gw = tf.Variable(tf.random_uniform([(nQ+1), g], minval=-1*gwrange, maxval=gwrange), name='global_word_embedding', trainable=True)
+			self.Gw = tf.get_variable("global_word_embedding", shape=[nQ,g], initializer=tf.contrib.layers.xavier_initializer())
+
 			# Copy actions embedding
 			# Contiguous set of l embeddings correspond to a field
 			# Field j position i indexed by j*l + i
-                        frange = np.sqrt(6)/(l*nF + d)
-			#self.F_ji = tf.Variable(tf.random_normal([l*nF, d], stddev=0.01))
-			self.F_ji = tf.Variable(tf.random_uniform([l*nF, d], minval=-1*frange, maxval=frange), name='copy_action_embedding', trainable=True)
+			self.F_ji = tf.get_variable("copy_action_embedding", shape=[l*nF, d], initializer=tf.contrib.layers.xavier_initializer())
 
 		with tf.name_scope('hidden_context'):
-			#Xavier initialization range
-			hrange = np.sqrt(6)/(d_1 + nhu)
 			# Weights and biases
-			self.W_1 = tf.Variable(tf.random_uniform([d_1, nhu], minval=-1*hrange, maxval=hrange), name='input_weights', trainable=True)
-			self.b_1 = tf.Variable(tf.random_uniform([nhu], minval=-1*hrange, maxval=hrange), name='input_biases', trainable=True)
+			self.W_1 = tf.get_variable("input_weights", shape=[d_1, nhu], initializer=tf.contrib.layers.xavier_initializer())
+			self.b_1 = tf.Variable(tf.zeros([nhu]), name="input_biases", trainable=True)
 
-			h_copy_range = np.sqrt(6)/(d + nhu)
             #Copy action weights and biases
-			self.W_4 = tf.Variable(tf.random_uniform([d, nhu], minval=-1*h_copy_range, maxval=h_copy_range), name='copy_weights', trainable=True)
-			self.b_4 = tf.Variable(tf.random_uniform([nhu], minval=-1*h_copy_range, maxval=h_copy_range), name='copy_biases', trainable=True)
+			self.W_4 = tf.get_variable("copy_weights", shape=[d, nhu], initializer=tf.contrib.layers.xavier_initializer())
+			self.b_4 = tf.Variable(tf.zeros([nhu]), name="copy_biases", trainable=True)
 
 		with tf.name_scope('output_phi_w'):
-			#Xavier initialization range
-			outrange = np.sqrt(6)/(nW + nhu)
 			# Weights and biases
-			self.W_out = tf.Variable(tf.random_uniform([nhu, nW], minval=-1*outrange, maxval=outrange), name='output_weights', trainable=True)
-			self.b_out = tf.Variable(tf.random_uniform([nW], minval=-1*outrange, maxval=outrange), name='output_biases', trainable=True)
-
-			#self.W_out = tf.Variable(tf.random_uniform([nW, nhu], minval = -1*outrange, maxval=outrange))
-			#b_o = tf.Variable(tf.random_uniform([nW, 1], minval=-1*outrange, maxval=outrange))
-			#self.b_out = tf.tile(b_o, tf.pack([1, batch_size]))
-			#self.b_out = tf.Variable(tf.random_normal([nW, batch_size], stddev=0.01))
+			self.W_out = tf.get_variable("output_weights", shape=[nhu, nW], initializer=tf.contrib.layers.xavier_initializer())
+			self.b_out = tf.Variable(tf.zeros([nW]), name="output_biases", trainable=True)
 
 		print("Done initializing the copyattention model")
 
@@ -160,8 +138,6 @@ class CopyAttention(object):
 		ct = tf.reshape(ct_lookup, (batch_size, (n-1)*d))
 
 		# Lookup for local context embeddings.
-		
-		#zp_lookup = tf.nn.embedding_lookup(self.Z_plus, zp) #,(batch_size, (n-1)*d*word_max_fields))
 		zp_lookup = tf.reshape(tf.nn.embedding_lookup(self.Z_plus, zp), (batch_size, (n-1), word_max_fields, d))
 		zp_fin = tf.reshape(tf.reduce_max(zp_lookup, reduction_indices=[2]), (batch_size, (n-1)*d))
 
@@ -181,7 +157,7 @@ class CopyAttention(object):
 		x_ct = tf.concat(1, (ct, zp_fin, zm_fin, gf_fin, gw_fin))
 		return x_ct
 
-	def inference(self, context, zp, zm, gf, gw, copy, projection, batch_size):
+	def inference(self, batch_size, context, zp, zm, gf, gw, copy, projection):
 		""" Build the CopyAttention model.
 
 		Args:
@@ -209,7 +185,6 @@ class CopyAttention(object):
 
 		h_ct = tf.tanh(tf.nn.xw_plus_b(x_ct, self.W_1, self.b_1))
 
-
 		num_words = tf.shape(copy)[0]
 		copy_lookup = tf.reshape(tf.nn.embedding_lookup(self.F_ji, copy), (num_words*word_max_fields,d))
 		q_w_mat = tf.reshape(tf.nn.xw_plus_b(copy_lookup, self.W_4, self.b_4), (num_words, word_max_fields, nhu))
@@ -221,40 +196,7 @@ class CopyAttention(object):
 		total = tf.shape(copy_score)[1]
 		pad = tf.zeros([batch_size, total - nw])
 		phi = tf.concat(1, (phi_out, pad))
-
 		logits = tf.add(copy_score, phi)
-
-	
-		#logits = tf.nn.xw_plus_b(h_ct, self.W_out, self.b_out)
-		predictions = tf.argmax(logits, 1)
-		return logits
-
-	def inference_v(self, context, zp, zm, gf, gw):
-		""" Build the CopyAttention model.
-
-		Args:
-			context_word  : Context word embedding indices for the current
-							batch. Each row corresponds to a context and
-							values represent indices of the words appearing
-							in the context. Size: [batch_size, (n-1)]
-			zp            : Indices into the embedding matrix for local context(plus)
-							Size: [batch_size, (n-1)*word_max_fields]
-			zm            : Indices into the embedding matrix for local context(minus)
-							Size: [batch_size, (n-1)*word_max_fields]
-			gf            : Index into the global field embedding matrix.
-							Size: [batch_size, max_fields]
-			gw            : Index into the global word embedding matrix.
-							Size: [batch_size, max_words]
-		
-		Returns:
-			The computed logits. Size: [batch_size, nW]
-		"""
-
-		x_ct = self.generate_x_ct(context, zp, zm, gf, gw, 1) 
-
-		h_ct = tf.tanh(tf.nn.xw_plus_b(x_ct, self.W_1, self.b_1))
-		logits = tf.nn.xw_plus_b(h_ct, self.W_out, self.b_out)
-		predictions = tf.argmax(logits, 1)
 		return logits
 
 	def loss(self, logits , next_word):
@@ -283,29 +225,6 @@ class CopyAttention(object):
 		Returns:
 			train_op : Train operation for training
 		"""
-		#(loss_val, _) = loss
-		#train_op = tf.train.AdamOptimizer(1e-4).minimize(loss_val)
-		#gvs = optimizer.compute_gradients(loss)
-		#capped_gvs = [(tf.clip_by_value(grad, -0.5, 0.5) , var) for grad, var in gvs]
-		#train_op = optimizer.apply_gradients(capped_gvs)
-		optimizer = tf.train.GradientDescentOptimizer(self.lr)
-		train_op = optimizer.minimize(loss)
-		return train_op
-
-	def training(self, loss):
-		""" Set up training
-
-		Args:
-			loss	 : Tensor returned by loss
-
-		Returns:
-			train_op : Train operation for training
-		"""
-		#(loss_val, _) = loss
-		#train_op = tf.train.AdamOptimizer(1e-4).minimize(loss_val)
-		#gvs = optimizer.compute_gradients(loss)
-		#capped_gvs = [(tf.clip_by_value(grad, -0.5, 0.5) , var) for grad, var in gvs]
-		#train_op = optimizer.apply_gradients(capped_gvs)
 		optimizer = tf.train.GradientDescentOptimizer(self.lr)
 		train_op = optimizer.minimize(loss)
 		return train_op
@@ -313,7 +232,8 @@ class CopyAttention(object):
 	def predicted_label(self, logits):
 		y = tf.nn.softmax(logits)
 		predict = tf.argmax(y, 1)
-		return predict
+		size = tf.shape(predict)[0]
+		return tf.reshape(predict, (1,size))
 
 	def evaluate(self, logits, next_word):
 		correct = tf.nn.in_top_k(logits, next_word, 1)
