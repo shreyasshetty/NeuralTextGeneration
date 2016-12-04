@@ -171,6 +171,8 @@ def main(_):
 							if prev == word2idx['.']:
 								pos = 1
 								exp.write('\n')
+							# break out of generation loop. 
+							# long sentence implies the model is stuck.
 							if len_sent == 50:
 								break
 							prev_predict = prev
@@ -212,6 +214,8 @@ def main(_):
 						if prev == word2idx['.']:
 							pos = 1
 							gen_sent.write('\n')
+						# break out of generation loop. 
+						# long sentence implies the model is stuck.
 						if len_sent == 100:
 							break
 						prev_predict = prev
