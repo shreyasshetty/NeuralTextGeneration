@@ -516,9 +516,11 @@ def resize_index(word2idx, tableWords):
 
 	for word in out:
 		wq2idx[word] = len(wq2idx)
+	
+	idx2wq = dict(zip(wq2idx.values(), wq2idx.keys()))
 
 	assert(len(wq2idx) == len(ws) + len(out))
-	return wq2idx
+	return wq2idx, idx2wq
 
 def project_copy_scores(max_table_words, nW, wq2idx, tableWords):
 	"""
@@ -605,6 +607,10 @@ def setup(data_dir, embed_dir, n, batch_size, nW, min_field_freq, nQ):
 	train_x = os.path.join(data_dir, 'train', 'train_x')
 	if not os.path.isfile(train_x):
 		create_dataset(data_dir,'train', n, batch_size) 
+
+	test_x = os.path.join(data_dir, 'test', 'test_x')
+	if not os.path.isfile(test_x):
+		create_dataset(data_dir,'test', n, batch_size) 
 
 	valid_x = os.path.join(data_dir, 'valid', 'valid_x')
 	if not os.path.isfile(valid_x):
@@ -698,7 +704,7 @@ class DataSet(object):
 		z_minus = []
 
 		tablewords = table_words(table)
-		wq2idx = resize_index(self._word2idx, tablewords)
+		wq2idx, _ = resize_index(self._word2idx, tablewords)
 		copy_projection_matrix = project_copy_scores(self._max_words_in_table, self._nW, wq2idx, tablewords)
 
 		while(len(words) >= self._n):
@@ -757,7 +763,7 @@ class DataSet(object):
 				ct.append(self._word2idx['UNK'])
 		
 		tablewords = table_words(table)
-		wq2idx = resize_index(self._word2idx, tablewords)
+		wq2idx, idx2wq = resize_index(self._word2idx, tablewords)
 		projection_mat = project_copy_scores(self._max_words_in_table, self._nW, wq2idx, tablewords)
 		copy = getcopyaction(table, self._word_max_fields, self._field2idx)
 
@@ -765,4 +771,4 @@ class DataSet(object):
 
 		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
 		next_word = self._word2idx['UNK']
-		return ct, zp, zm, gf, gw, next_word, copy, projection_mat
+		return ct, zp, zm, gf, gw, next_word, copy, projection_mat, idx2wq

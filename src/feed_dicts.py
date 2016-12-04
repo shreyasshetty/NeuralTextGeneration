@@ -44,7 +44,7 @@ def placeholder_inputs_single(ct_size, zp_size, zm_size, gf_size, gw_size, copy_
 	return context_pl, zp_pl, zm_pl, gf_pl, gw_pl, copy_pl, projection_pl, next_pl 
 
 def fill_feed_dict_single(data_set, prev_predict, pos, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl):
-	context, local_plus, local_minus, global_field, global_word, next_word, copy, projection_mat = data_set.next_single(pos, prev_predict)
+	context, local_plus, local_minus, global_field, global_word, next_word, copy, projection_mat, idx2wq = data_set.next_single(pos, prev_predict)
 	
 	feed_dict = {
 		context_pl : context,
@@ -56,7 +56,7 @@ def fill_feed_dict_single(data_set, prev_predict, pos, context_pl, zp_pl, zm_pl,
 		projection_pl : projection_mat
 	}
 
-	return feed_dict
+	return feed_dict, idx2wq
 
 def do_eval(sess, train_op, loss, data_set, batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl):
 	start = time.time()

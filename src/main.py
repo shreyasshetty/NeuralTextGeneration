@@ -147,58 +147,73 @@ def main(_):
 				if (i % FLAGS.print_every == 0):	
 					print("Epoch : %d\tStep : %d\tLoss : %0.3f" %(epoch, i, loss_value))	
 
+				if (i == -1 and i % FLAGS.valid_every == 0):
+					print("Validation starting")
+					valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
+					print("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
+
 				if (i != 0 and i % FLAGS.sample_every == 0):
 					test_dataset.reset_context()
 					pos = 0
+					len_sent = 0
 					prev_predict = word2idx['START']
-					while (pos != 1):
-						with open(os.path.join(expt_result_path, 'results.txt'),'a') as exp:
-							feed_dict_t = fill_feed_dict_single(test_dataset,prev_predict, 0, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
+					with open(os.path.join(expt_result_path, 'results.txt'),'a') as exp:
+						while (pos != 1):
+							feed_dict_t, idx2wq = fill_feed_dict_single(test_dataset,prev_predict, 0, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
 							prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
 							prev = prev_predict[0][0][0]
-							if prev in idx2word:
-								exp.write(idx2word[prev] + ' ')
+							if prev in idx2wq:
+								exp.write(idx2wq[prev] + ' ')
+								len_sent = len_sent + 1
 							else:
 								exp.write('UNK ')
+								len_sent = len_sent + 1
 							if prev == word2idx['.']:
 								pos = 1
 								exp.write('\n')
+							if len_sent == 50:
+								break
 							prev_predict = prev
 	
-			duration_e = time.time() - start
+			duration_e = time.time() - start_e
 
 			print("Validation starting")
 			start = time.time()
 			valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
 			duration = time.time() - start
-			print("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
-			print("Time taken for validating epoch %d : %0.3f" %(i, duration))
-			with open(os.path.join(expt_result_path, str(i)+'_valid_loss'), 'w') as valid_loss_f:
-				valid_loss_f.write("Epoch : %d\tValidation loss: %0.5f" %(i, valid_loss))
+			print("Epoch : %d\tValidation loss: %0.5f" %(epoch, valid_loss))
+			print("Time taken for validating epoch %d : %0.3f" %(epoch, duration))
+			with open(os.path.join(expt_result_path, str(epoch)+'_valid_loss'), 'w') as valid_loss_f:
+				valid_loss_f.write("Epoch : %d\tValidation loss: %0.5f" %(epoch, valid_loss))
 
-			checkpoint_file = os.path.join(chkpt_result_path, str(i) + '_checkpoint')
+			checkpoint_file = os.path.join(chkpt_result_path, str(epoch) + '_checkpoint')
 			saver.save(sess, checkpoint_file)
 
 			print("Generating sentences for test dataset")
 			start = time.time()
 			num_test_boxes = test_dataset.num_infoboxes()
-			test_sentences = os.path.join(expt_result_path, str(i) + '_sentences.txt')
+			test_sentences = os.path.join(expt_result_path, str(epoch) + '_sentences.txt')
 			with open(test_sentences, 'a') as gen_sent:
 				for k in range(num_test_boxes):
 					pos = 0
+					len_sent = 0
 					prev_predict = word2idx['START']
 					test_dataset.reset_context()
 					while(pos != 1):
-						feed_dict_t = fill_feed_dict_single(test_dataset,prev_predict, k, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
+						feed_dict_t, idx2wq = fill_feed_dict_single(test_dataset,prev_predict, k, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
 						prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
 						prev = prev_predict[0][0][0]
-						if prev in idx2word:
-							gen_sent.write(idx2word[prev] + ' ')
+						if prev in idx2wq:
+							gen_sent.write(idx2wq[prev] + ' ')
+							len_sent = len_sent + 1
 						else:
 							gen_sent.write('UNK ')
+							len_sent = len_sent + 1
 						if prev == word2idx['.']:
 							pos = 1
 							gen_sent.write('\n')
+						if len_sent == 100:
+							break
 						prev_predict = prev
 			duration = time.time() - start
 			print("Time taken to generate test sentences: %0.3f" %(duration))
