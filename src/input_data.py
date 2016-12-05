@@ -436,6 +436,58 @@ def get_max_words_in_table(data_dir, dataset):
     max_words_in_table = max(ws)
     return max_words_in_table
 
+<<<<<<< HEAD
+=======
+def table_words(table):
+	tokens = table.split()
+	twords = []
+
+	for token in tokens:
+		(_,tWord) = token.split(':',1)
+		if tWord != '<none>':
+			twords.append(tWord)
+	
+	uniq = set(twords)
+	words = list(uniq)
+	return words
+
+def resize_index(word2idx, tableWords):
+	"""
+	Create a combined index of words in
+	W union Q (tableWords).
+	"""
+	ws = word2idx.keys()	
+	out = set(tableWords) - set(ws)
+	wq2idx = word2idx.copy()
+
+	for word in out:
+		wq2idx[word] = len(wq2idx)
+	
+	idx2wq = dict(zip(wq2idx.values(), wq2idx.keys()))
+
+	assert(len(wq2idx) == len(ws) + len(out))
+	return wq2idx, idx2wq
+
+def project_copy_scores(max_table_words, nW, wq2idx, tableWords):
+	"""
+	Return a (nW + max_table_words)*tableWords transformation matrix
+	that projects copy scores into the output distribution.
+	"""
+	num_words_in_table = len(tableWords)
+	q_proj = np.zeros([(nW + max_table_words), num_words_in_table], dtype=float)
+	for i in range(num_words_in_table):
+		word = tableWords[i]
+		q_proj[wq2idx[word]][i] = 1
+	return q_proj
+
+def getmaxwordsintable(data_dir, dataset):
+	with open(os.path.join(data_dir, dataset, '%s.box' %(dataset)), 'r') as box_f:
+		boxes = box_f.readlines()
+	
+	ws = [len(table_words(box)) for box in boxes]
+	max_words_in_table = max(ws)
+	return max_words_in_table
+>>>>>>> 4f7338cdf0872c6e86bb9620f504fce2f7bf700c
 
 def getcopyaction(table, word_max_fields, field2idx):
     """ get_copy_action : Get the copy action embedding
@@ -622,6 +674,7 @@ def local_context(context, table, l, field2idx, word_max_fields):
 
 
 def setup(data_dir, embed_dir, n, batch_size, nW, min_field_freq, nQ):
+<<<<<<< HEAD
     """ setup : Setup all the indexes and related startup functions.
 
     Args:
@@ -865,3 +918,181 @@ class DataSet(object):
         # not used.
         next_word = self._word2idx['<unk>']
         return ct, zp, zm, gf, gw, next_word, copy, q_proj, idx2wq
+=======
+	""" A function which prepares all the indexes and other needed 
+	preliminaries to run the program.
+	Run once in main() in the train file.
+	"""
+	preprocess_input_files('train')
+	preprocess_input_files('test')
+	preprocess_input_files('valid')
+	
+	train_x = os.path.join(data_dir, 'train', 'train_x')
+	if not os.path.isfile(train_x):
+		create_dataset(data_dir,'train', n, batch_size) 
+
+	test_x = os.path.join(data_dir, 'test', 'test_x')
+	if not os.path.isfile(test_x):
+		create_dataset(data_dir,'test', n, batch_size) 
+
+	valid_x = os.path.join(data_dir, 'valid', 'valid_x')
+	if not os.path.isfile(valid_x):
+		create_dataset(data_dir,'valid', n, batch_size) 
+	
+	wpath = os.path.join(data_dir, 'train', 'train_in.sent')
+	#word2idx, idx2word = build_vocab(wpath, nW, '../index')
+	_, word2idx, idx2word = gethpcaembeddings(embed_dir, nW) 
+	fqpath = os.path.join(data_dir, 'train', 'train.box')
+	field2idx, idx2field, nF = field_vocab(fqpath, min_field_freq, '../index')
+	qword2idx, idx2qword = qword_vocab(fqpath, nQ, '../index')
+	
+	max_words_in_table = getmaxwordsintable(data_dir, 'train')
+
+	return word2idx, idx2word, field2idx, idx2field, nF, qword2idx, idx2qword, max_words_in_table
+
+
+class DataSet(object):
+	def __init__(self, data_dir, dataset, n, nW, nF, nQ, l, batch_size,	
+	            word2idx, idx2word, field2idx, idx2field, 
+				qword2idx, idx2qword, max_words, max_fields, word_max_fields, max_words_in_table):
+		self._dataset = dataset
+		self._batch_size = batch_size
+		self._n = n
+		self._l = l
+		self._nW = nW
+		self._nF = nF
+		self._nQ = nQ
+
+		# Set up the indexes
+		self._word2idx = word2idx
+		self._idx2word = idx2word
+		self._field2idx = field2idx
+		self._idx2field = idx2field
+		self._qword2idx = qword2idx
+		self._idx2qword = idx2qword
+		
+		# Parameters for global and local contexts
+		self._max_words = max_words  # Max. words in an infobox
+		self._max_fields = max_fields # Max. fields in an infobox
+		self._word_max_fields = word_max_fields # Max. words per field
+		self._max_words_in_table = max_words_in_table
+
+		# Infoboxes
+		with open(os.path.join(data_dir, dataset, '%s.box' %(dataset)), 'r') as table_f:
+			self._tables = table_f.readlines()
+
+		# x, y pairs
+		with open(os.path.join(data_dir, dataset, '%s_x' %(dataset))) as X, \
+			 open(os.path.join(data_dir, dataset, '%s_y' %(dataset))) as Y:
+			xs = X.readlines()
+			ys = Y.readlines()
+
+		self._xs = map(lambda x: x.rstrip(), xs)
+		self._ys = map(lambda x: int(x.rstrip()), ys)
+
+		self._num_examples = len(self._xs)
+		self._sequence = np.arange(self._num_examples)
+
+		self._context = ['START'] * (self._n - 1)
+
+	def generate_permutation(self):
+		np.random.shuffle(self._sequence)
+
+	def num_examples(self):
+		return self._num_examples
+	
+	def reset_context(self):
+		self._context = ['START'] * (self._n - 1)
+
+	def num_infoboxes(self):
+		return len(self._tables)
+
+	def next_batch(self, pos):
+		idx = self._sequence[pos]
+
+		# Sentence for the current example
+		sentence = self._xs[idx]
+		
+		# index for the table in the current example
+		tablepos = self._ys[idx]
+		table = self._tables[tablepos]
+
+		# 'START' tokens already appended
+		words = sentence.split()
+		contexts = []
+		labels = []
+		ct = []
+		next_word = []
+		z_plus = []
+		z_minus = []
+
+		tablewords = table_words(table)
+		wq2idx, _ = resize_index(self._word2idx, tablewords)
+		copy_projection_matrix = project_copy_scores(self._max_words_in_table, self._nW, wq2idx, tablewords)
+
+		while(len(words) >= self._n):
+			contexts.append(words[:self._n-1])
+			next_word.append(words[self._n-1])
+			words = words[1:]
+
+		assert(len(next_word) == len(contexts))
+
+		if (len(contexts) < self._batch_size):
+			contexts.extend([contexts[-1]] * (self._batch_size - len(contexts)))			
+			next_word.extend([next_word[-1]] * (self._batch_size - len(next_word)))
+
+		assert(len(contexts) == self._batch_size)
+		assert(len(next_word) == self._batch_size)
+
+		for context in contexts:
+			ctxt = []
+			for word in context:
+				if word in self._word2idx:
+					ctxt.append(self._word2idx[word])
+				else:
+					ctxt.append(self._word2idx['UNK'])
+			ct.append(ctxt)
+
+		for word in next_word:
+			if word in wq2idx:
+				labels.append(wq2idx[word])
+			else:
+				labels.append(wq2idx['UNK'])
+
+		for context in contexts:
+			zp, zm = local_context(context, table, self._l, self._field2idx, self._word_max_fields)
+			z_plus.append(zp)
+			z_minus.append(zm)
+
+		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
+		global_field = [gf] * self._batch_size
+		global_word = [gw] * self._batch_size
+		copy = getcopyaction(table, self._word_max_fields, self._field2idx)
+
+		return ct, z_plus, z_minus, global_field, global_word, labels, copy, copy_projection_matrix
+
+	def next_single(self, pos, previous_pred):
+		table = self._tables[pos]
+		if previous_pred in self._idx2word:
+			self._context = self._context[1:] + [self._idx2word[previous_pred]]
+		else:
+			self._context = self._context[1:] + ['UNK']
+
+		ct = []
+		for word in self._context:
+			if word in self._word2idx:
+				ct.append(self._word2idx[word])
+			else:
+				ct.append(self._word2idx['UNK'])
+		
+		tablewords = table_words(table)
+		wq2idx, idx2wq = resize_index(self._word2idx, tablewords)
+		projection_mat = project_copy_scores(self._max_words_in_table, self._nW, wq2idx, tablewords)
+		copy = getcopyaction(table, self._word_max_fields, self._field2idx)
+
+		zp, zm = local_context(self._context, table, self._l, self._field2idx, self._word_max_fields)
+
+		gf, gw = global_context(table, self._max_fields, self._max_words, self._field2idx, self._qword2idx)
+		next_word = self._word2idx['UNK']
+		return ct, zp, zm, gf, gw, next_word, copy, projection_mat, idx2wq
+>>>>>>> 4f7338cdf0872c6e86bb9620f504fce2f7bf700c
