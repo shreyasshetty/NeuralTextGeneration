@@ -4,6 +4,7 @@ from collections import Counter
 import time
 import os
 import numpy as np
+from array import array
 
 
 def preprocess_input_files(data_dir, dataset):
@@ -401,7 +402,7 @@ def project_copy_scores(max_table_words, nW, wq2idx, t_words):
 
     Return:
         A (num_words_in_table, nW + max_table_words) numpy array
-        to project copy scores to the output distribution.
+    to project copy scores to the output distribution.
     """
     num_words_in_table = len(t_words)
     q_proj = np.zeros([num_words_in_table, (nW + max_table_words)],
@@ -482,7 +483,7 @@ def global_context(table, max_fields, max_words, field2idx, qword2idx):
     """ global_context : Get the global context lookup entries.
 
     Args:
-        table      : The infobox in consideration.
+        table : The infobox in consideration.
         max_fields : Max fields in an infobox.
         max_words  : Max. words in an infobox.
         field2idx  : index for field names.
@@ -537,7 +538,7 @@ def global_context(table, max_fields, max_words, field2idx, qword2idx):
     return gf, gw
 
 
-def local_context(context, table, l, field2idx, word_max_fields):
+def local_context(context, tableidx, l, field2idx, word_max_fields):
     """ local_context : Generate the local context lookup given
     the input context.
 
@@ -553,16 +554,16 @@ def local_context(context, table, l, field2idx, word_max_fields):
         z_minus : Lookup into the embeddings from end of field.
     """
     # Build the table index.
-    tableidx = table_idx(table)
-    z_plus = []
-    z_minus = []
+    z_plus = array('i')
+    z_minus = array('i')
 
     for word in context:
-        plus = []
-        minus = []
+        plus = array('i')
+        minus = array('i')
 
         # Check if the current context word is in the
         # infobox.
+        start_t = time.time()
         if word in tableidx:
             # Collect the list of occurances of the word.
             # across fields.
@@ -593,6 +594,7 @@ def local_context(context, table, l, field2idx, word_max_fields):
             plus.append(pos)
             minus.append(pos)
 
+        duration_t = time.time() - start_t
         # After filling up the word indices, we could end
         # with two possibilities
         # 1. Fewer than word_max_fields indices
@@ -618,7 +620,10 @@ def local_context(context, table, l, field2idx, word_max_fields):
         z_plus.extend(plus)
         z_minus.extend(minus)
 
-    return z_plus, z_minus
+    # print "Time for computing index %0.5f s" % (duration_idx)
+    # print "Time for one loop in each word %0.5f s" % (duration_t)
+
+    return np.array(z_plus), np.array(z_minus)
 
 
 def setup(data_dir, embed_dir, n, batch_size, nW, min_field_freq, nQ):
@@ -642,19 +647,13 @@ def setup(data_dir, embed_dir, n, batch_size, nW, min_field_freq, nQ):
     preprocess_input_files('../data/', 'test')
     preprocess_input_files('../data/', 'valid')
 
-    train_x = os.path.join(data_dir, 'train', 'train_x')
-    if not os.path.isfile(train_x):
-        create_dataset(data_dir, 'train', n, batch_size)
+    create_dataset(data_dir, 'train', n, batch_size)
 
     # Created just to maintain consistency with the DataSet
     # class. Not used in the learning procedure.
-    test_x = os.path.join(data_dir, 'test', 'test_x')
-    if not os.path.isfile(test_x):
-        create_dataset(data_dir, 'test', n, batch_size)
+    create_dataset(data_dir, 'test', n, batch_size)
 
-    valid_x = os.path.join(data_dir, 'valid', 'valid_x')
-    if not os.path.isfile(valid_x):
-        create_dataset(data_dir, 'valid', n, batch_size)
+    create_dataset(data_dir, 'valid', n, batch_size)
 
     word2idx = w_index(embed_dir, nW)
     field2idx, nF = field_vocab(data_dir, 'train', min_field_freq)
@@ -783,6 +782,7 @@ class DataSet(object):
             next_word.extend([next_word[-1]] *
                              (self._batch_size - len(next_word)))
 
+        start_ct = time.time()
         # Map words in the context to the vocabulary position.
         for context in contexts:
             ctxt = []
@@ -792,7 +792,9 @@ class DataSet(object):
                 else:
                     ctxt.append(self._word2idx['<unk>'])
             ct.append(ctxt)
+        duration_ct = time.time() - start_ct
 
+        start_label = time.time()
         # Map the target words into words from the output
         # vocabulary. These can be outside the word2idx as
         # well.
@@ -801,17 +803,28 @@ class DataSet(object):
                 labels.append(wq2idx[word])
             else:
                 labels.append(wq2idx['<unk>'])
+        duration_label = time.time() - start_label
 
+        start_z = time.time()
+        tableidx = table_idx(table)
         # Compute the local contexts for each context.
         for context in contexts:
-            zp, zm = local_context(context, table, self._l,
+            zp, zm = local_context(context, tableidx, self._l,
                                    self._field2idx, self._word_max_fields)
             z_plus.append(zp)
             z_minus.append(zm)
+        duration_z = time.time() - start_z
 
+        start_g = time.time()
         # Get the global context for the given table.
         gf, gw = global_context(table, self._max_fields, self._max_words,
                                 self._field2idx, self._qword2idx)
+        duration_g = time.time() - start_g
+
+        # print "Time for context : %0.5f" % (duration_ct)
+        # print "Time for label : %0.5f" % (duration_label)
+        # print "Time for local: %0.5f" % (duration_z)
+        # print "Time for global: %0.5f" % (duration_g)
 
         # Make batch_size many copies of the global
         # conditioning entries.
@@ -854,8 +867,9 @@ class DataSet(object):
             else:
                 ct.append(self._word2idx['<unk>'])
 
+        tableidx = table_idx(table)
         # Generate the local conditioning variables.
-        zp, zm = local_context(self._context, table, self._l,
+        zp, zm = local_context(self._context, tableidx, self._l,
                                self._field2idx, self._word_max_fields)
 
         # Generate the global conditioning lookups.
