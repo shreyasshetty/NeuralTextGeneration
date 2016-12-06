@@ -27,7 +27,7 @@ flags.DEFINE_integer("l", 10, "Max number of words per field [10]")
 flags.DEFINE_float("learning_rate", 0.0025, "Learning rate parameter [0.0025]")
 
 # Dataset related parameters
-flags.DEFINE_integer("max_words", 100, "Maximum number of words in an infobox [100]")
+flags.DEFINE_integer("max_words", 337, "Maximum number of words in an infobox [337]")
 flags.DEFINE_integer("max_fields", 10, "Maximum number of fields in an infobox [10]")
 flags.DEFINE_integer("word_max_fields", 10, "Maximum of fields a word from an infobox can appear in [10]")
 flags.DEFINE_integer("nW", 20000, "Size of the sentence vocabulary")
@@ -74,25 +74,47 @@ def main(_):
 		json.dump(flags.FLAGS.__flags, params_c)
 	
 	# Generate the indexes
-	word2idx, idx2word, field2idx, idx2field, nF, qword2idx, idx2qword, max_words_in_table = \
+#	word2idx, idx2word, field2idx, idx2field, nF, qword2idx, idx2qword, max_words_in_table = \
+#		setup(FLAGS.data_dir, '../embeddings', FLAGS.n, FLAGS.batch_size, FLAGS.nW, FLAGS.min_field_freq, FLAGS.nQ)
+#
+#	# Create the dataset objects
+#	train_dataset = DataSet(FLAGS.data_dir,'train',FLAGS.n, FLAGS.nW, nF, \
+#							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
+#							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+#							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
+#	num_train_examples = train_dataset.num_examples()
+#	
+#	valid_dataset =  DataSet(FLAGS.data_dir,'valid',FLAGS.n, FLAGS.nW, nF, \
+#							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
+#							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+#							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
+#	num_valid_examples = valid_dataset.num_examples()
+#
+#	test_dataset = DataSet(FLAGS.data_dir,'test',FLAGS.n, FLAGS.nW, nF, \
+#							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
+#							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+#							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
+
+	# Generate the indexes
+	word2idx, field2idx, qword2idx, nF, max_words_in_table = \
 		setup(FLAGS.data_dir, '../embeddings', FLAGS.n, FLAGS.batch_size, FLAGS.nW, FLAGS.min_field_freq, FLAGS.nQ)
 
 	# Create the dataset objects
 	train_dataset = DataSet(FLAGS.data_dir,'train',FLAGS.n, FLAGS.nW, nF, \
 							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
-							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+							field2idx, qword2idx, \
 							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
 	num_train_examples = train_dataset.num_examples()
 	
 	valid_dataset =  DataSet(FLAGS.data_dir,'valid',FLAGS.n, FLAGS.nW, nF, \
 							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
-							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+							field2idx, qword2idx, \
 							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
 	num_valid_examples = valid_dataset.num_examples()
 
 	test_dataset = DataSet(FLAGS.data_dir,'test',FLAGS.n, FLAGS.nW, nF, \
 							FLAGS.nQ, FLAGS.l, FLAGS.batch_size, word2idx, \
-							idx2word, field2idx, idx2field, qword2idx, idx2qword, \
+							field2idx, qword2idx, \
 							FLAGS.max_words, FLAGS.max_fields, FLAGS.word_max_fields, max_words_in_table)
 
 	# The sizes of respective conditioning variables
@@ -110,8 +132,8 @@ def main(_):
 
 		# Create the CopyAttention model
 		model = CopyAttention(FLAGS.n, FLAGS.d, FLAGS.g, FLAGS.nhu, FLAGS.nW, nF, FLAGS.nQ, \
-		                      FLAGS.nQpr, FLAGS.l, FLAGS.learning_rate, FLAGS.max_words, \
-							  FLAGS.max_fields, FLAGS.word_max_fields, FLAGS.batch_size)	
+		                      FLAGS.l, FLAGS.learning_rate, FLAGS.max_words, \
+							  FLAGS.max_fields, FLAGS.word_max_fields)	
 
 		# Placeholders for train and validation
 		context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl = \
@@ -124,12 +146,12 @@ def main(_):
 		# Train and validation part of the model	
 		predict = model.inference(FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, copy_pl, projection_pl)
 		loss = model.loss(predict, next_pl)
-		train_op = model.train(loss)
+		train_op = model.training(loss)
 		evaluate = model.evaluate(predict, next_pl)
 
 		# Test component of the model
 		pred_single = model.inference(1, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, copy_pl_t, projection_pl_t)
-		predicted_label = model.predicted_label(pred_single)
+		predicted_label = model.predict(pred_single)
 	
 		# Initialize the variables and start the session	
 		init = tf.initialize_all_variables()
@@ -140,9 +162,15 @@ def main(_):
 		for epoch in range(1, FLAGS.num_epochs + 1):
 			train_dataset.generate_permutation()		
 			start_e = time.time()
-			for i in range(num_train_examples):
+			# original statement
+			# for i in range(num_train_examples): 
+			for i in range(100):
+				start_ex = time.time()
+				start_tl = time.time()
 				feed_dict = fill_feed_dict(train_dataset, i, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)	
 				_, loss_value = sess.run([train_op, loss], feed_dict=feed_dict)
+				duration_tl = time.time() - start_tl
+				print "Time taken for train and loss: %0.5f s" % (duration_tl)
 
 				if (i % FLAGS.print_every == 0):	
 					print("Epoch : %d\tStep : %d\tLoss : %0.3f" %(epoch, i, loss_value))	
@@ -156,7 +184,7 @@ def main(_):
 					test_dataset.reset_context()
 					pos = 0
 					len_sent = 0
-					prev_predict = word2idx['START']
+					prev_predict = word2idx['<start>']
 					with open(os.path.join(expt_result_path, 'results.txt'),'a') as exp:
 						while (pos != 1):
 							feed_dict_t, idx2wq = fill_feed_dict_single(test_dataset,prev_predict, 0, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
@@ -166,61 +194,59 @@ def main(_):
 								exp.write(idx2wq[prev] + ' ')
 								len_sent = len_sent + 1
 							else:
-								exp.write('UNK ')
+								exp.write('<unk> ')
 								len_sent = len_sent + 1
 							if prev == word2idx['.']:
 								pos = 1
 								exp.write('\n')
-							# break out of generation loop. 
-							# long sentence implies the model is stuck.
 							if len_sent == 50:
 								break
 							prev_predict = prev
+				duration_ex = time.time() - start_ex
+				print "Time taken for one batch : %0.5f s" % (duration_ex)
 	
 			duration_e = time.time() - start_e
 
-			print("Validation starting")
-			start = time.time()
-			valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
-			duration = time.time() - start
-			print("Epoch : %d\tValidation loss: %0.5f" %(epoch, valid_loss))
-			print("Time taken for validating epoch %d : %0.3f" %(epoch, duration))
-			with open(os.path.join(expt_result_path, str(epoch)+'_valid_loss'), 'w') as valid_loss_f:
-				valid_loss_f.write("Epoch : %d\tValidation loss: %0.5f" %(epoch, valid_loss))
-
-			checkpoint_file = os.path.join(chkpt_result_path, str(epoch) + '_checkpoint')
-			saver.save(sess, checkpoint_file)
-
-			print("Generating sentences for test dataset")
-			start = time.time()
-			num_test_boxes = test_dataset.num_infoboxes()
-			test_sentences = os.path.join(expt_result_path, str(epoch) + '_sentences.txt')
-			with open(test_sentences, 'a') as gen_sent:
-				for k in range(num_test_boxes):
-					pos = 0
-					len_sent = 0
-					prev_predict = word2idx['START']
-					test_dataset.reset_context()
-					while(pos != 1):
-						feed_dict_t, idx2wq = fill_feed_dict_single(test_dataset,prev_predict, k, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
-						prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
-						prev = prev_predict[0][0][0]
-						if prev in idx2wq:
-							gen_sent.write(idx2wq[prev] + ' ')
-							len_sent = len_sent + 1
-						else:
-							gen_sent.write('UNK ')
-							len_sent = len_sent + 1
-						if prev == word2idx['.']:
-							pos = 1
-							gen_sent.write('\n')
-						# break out of generation loop. 
-						# long sentence implies the model is stuck.
-						if len_sent == 100:
-							break
-						prev_predict = prev
-			duration = time.time() - start
-			print("Time taken to generate test sentences: %0.3f" %(duration))
+#			print("Validation starting")
+#			start = time.time()
+#			valid_loss = do_eval(sess, predict, evaluate, valid_dataset, FLAGS.batch_size, context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, projection_pl)
+#			duration = time.time() - start
+#			print("Epoch : %d\tValidation loss: %0.5f" %(epoch, valid_loss))
+#			print("Time taken for validating epoch %d : %0.3f" %(epoch, duration))
+#			with open(os.path.join(expt_result_path, str(epoch)+'_valid_loss'), 'w') as valid_loss_f:
+#				valid_loss_f.write("Epoch : %d\tValidation loss: %0.5f" %(epoch, valid_loss))
+#
+#			checkpoint_file = os.path.join(chkpt_result_path, str(epoch) + '_checkpoint')
+#			saver.save(sess, checkpoint_file)
+#
+#			print("Generating sentences for test dataset")
+#			start = time.time()
+#			num_test_boxes = test_dataset.num_infoboxes()
+#			test_sentences = os.path.join(expt_result_path, str(epoch) + '_sentences.txt')
+#			with open(test_sentences, 'a') as gen_sent:
+#				for k in range(num_test_boxes):
+#					pos = 0
+#					len_sent = 0
+#					prev_predict = word2idx['<start>']
+#					test_dataset.reset_context()
+#					while(pos != 1):
+#						feed_dict_t, idx2wq = fill_feed_dict_single(test_dataset,prev_predict, k, context_pl_t, zp_pl_t, zm_pl_t, gf_pl_t, gw_pl_t, next_pl_t, copy_pl_t, projection_pl_t)
+#						prev_predict = sess.run([predicted_label], feed_dict=feed_dict_t)
+#						prev = prev_predict[0][0][0]
+#						if prev in idx2wq:
+#							gen_sent.write(idx2wq[prev] + ' ')
+#							len_sent = len_sent + 1
+#						else:
+#							gen_sent.write('<unk> ')
+#							len_sent = len_sent + 1
+#						if prev == word2idx['.']:
+#							pos = 1
+#							gen_sent.write('\n')
+#						if len_sent == 100:
+#							break
+#						prev_predict = prev
+#			duration = time.time() - start
+#			print("Time taken to generate test sentences: %0.3f" %(duration))
 			print("Time taken for epoch : %d is %0.3f minutes" %(epoch, duration_e/60))
 	
 if __name__ == "__main__":
