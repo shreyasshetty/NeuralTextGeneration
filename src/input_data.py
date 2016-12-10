@@ -4,7 +4,6 @@ from collections import Counter
 import time
 import os
 import numpy as np
-from array import array
 
 
 def preprocess_input_files(data_dir, dataset):
@@ -137,6 +136,7 @@ def w_index(embed_path, k):
     words = [pair.strip().split()[0] for pair in freq_words]
     # append first two words in the index
     words = ['<unk>', '<start>'] + words[:k-2]
+    word_set = set(words)
 
     # Create the forward index starting from 0
     word2idx = dict()
@@ -144,7 +144,7 @@ def w_index(embed_path, k):
         word2idx[word] = len(word2idx)
 
     print "Done creating w_index"
-    return word2idx
+    return word2idx, word_set
 
 
 def qword_vocab(data_dir, dataset, k):
@@ -352,13 +352,16 @@ def table_words(table):
     return words
 
 
-def resize_index(word2idx, t_words):
+def resize_index(word2idx, ws, t_words, test=False):
     """ resize_index : Resize the index to account for words
     that appear in the table
 
     Args:
         word2idx    : The index of words in the vocabulary
+        ws : Set of words in the input vocabulary.
         t_words : List of words appearing in the table
+        test : Flag to indicate if we want to compute the
+        reverse index. (Primarily to save time in computation.)
 
     Returns:
         Combined index of words from vocabulary and the table
@@ -367,8 +370,7 @@ def resize_index(word2idx, t_words):
     # Collect the words in the vocabulary
     # and words outside the vocabulary that
     # are present in the table
-    ws = word2idx.keys()
-    out = set(t_words) - set(ws)
+    out = set(t_words) - ws
 
     # Sort the words to ensure that same order of
     # words is preserved on every call to resize_index
@@ -382,12 +384,13 @@ def resize_index(word2idx, t_words):
     for word in out:
         wq2idx[word] = len(wq2idx)
 
-    idx2wq = dict(zip(wq2idx.values(), wq2idx.keys()))
+    if test:
+        idx2wq = dict(zip(wq2idx.values(), wq2idx.keys()))
+        return wq2idx, idx2wq
 
     # Sanity check
     assert len(wq2idx) == len(ws) + len(out)
-
-    return wq2idx, idx2wq
+    return wq2idx
 
 
 def project_copy_scores(max_table_words, nW, wq2idx, t_words):
@@ -538,8 +541,106 @@ def global_context(table, max_fields, max_words, field2idx, qword2idx):
     return gf, gw
 
 
-def local_context(context, tableidx, l, field2idx, word_max_fields):
-    """ local_context : Generate the local context lookup given
+def local_context_precompute(words, tableidx, l, field2idx, word_max_fields):
+    """ local_context_precompute : precompute the local conditioning
+    lookup matrix (zp and zp) for each word in the sentence.
+
+    Args:
+        words     : words in the current batch.
+        tableidx  : table index computed using table_idx
+        l         : max. tokens per field.
+        field2idx : field to position index.
+        word_max_fields : max. number of fields a word can appear in.
+
+    Returns:
+        zp_dict, zm_dict : Mapping words to corresponding lookup lists.
+    """
+    zp_dict = dict()
+    zm_dict = dict()
+
+    for word in words:
+        zp_dict[word] = []
+        zm_dict[word] = []
+        if word in tableidx:
+            # Collect the list of occurances of the word.
+            # across fields.
+            fields = tableidx[word]
+            for field in fields:
+                (name, start, end) = field
+
+                # Account for the corner case the we might
+                # have some word beyond 'l' distance
+                # We just ignore if that is the case
+                if start > l or end > l:
+                    pass
+
+                if name in field2idx:
+                    pos = field2idx[name]
+                else:
+                    pos = field2idx['<unk>']
+
+                # start, end is indexed from 1.
+                # But the embedding matrices are indexed
+                # from zeros. Adjust for this by subtracting 1.
+                # plus.append(pos + start - 1)
+                # minus.append(pos + end - 1)
+                zp_dict[word].append(pos + start - 1)
+                zm_dict[word].append(pos + end - 1)
+
+        # Word in not present in the table values
+        else:
+            pos = field2idx['<unk>']
+            zp_dict[word].append(pos)
+            zm_dict[word].append(pos)
+            # plus.append(pos)
+            # minus.append(pos)
+        # Case 1
+        # Fix by filling up the remaining space by
+        # repeating the first element
+        if len(zp_dict[word]) < word_max_fields:
+            zp_dict[word].extend((word_max_fields - len(zp_dict[word])) *
+                                 [zp_dict[word][0]])
+
+        if len(zm_dict[word]) < word_max_fields:
+            zm_dict[word].extend((word_max_fields - len(zm_dict[word])) *
+                                 [zm_dict[word][0]])
+
+        # Case 2
+        # Fix by cutting off the list to just have
+        # word_max_fields many entries
+        if len(zp_dict[word]) > word_max_fields:
+            zp_dict[word] = zp_dict[word][:word_max_fields]
+        if len(zm_dict[word]) > word_max_fields:
+            zm_dict[word] = zm_dict[word][:word_max_fields]
+
+    return zp_dict, zm_dict
+
+
+def local_context(context, zp_dict, zm_dict):
+    """ local_context : Compute the local context given the
+    precomputed dictionaries.
+
+    Args:
+        context : The input context.
+        zp_dict : The pre-computed zp dictionary.
+        zm_dict : The pre-computed zm dictionary.
+
+    Returns:
+        zp, zm : The positive and negative conditioning lookup
+        matrices.
+    """
+    z_plus = []
+    z_minus = []
+
+    for word in context:
+        z_plus.extend(zp_dict[word])
+        z_minus.extend(zm_dict[word])
+
+    return z_plus, z_minus
+
+
+def local_context_test(context, tableidx, l, field2idx, word_max_fields):
+    """ local_context_test : Generate the local context lookup given
     the input context.
 
     Args:
@@ -554,16 +655,15 @@ def local_context(context, tableidx, l, field2idx, word_max_fields):
         z_minus : Lookup into the embeddings from end of field.
     """
     # Build the table index.
-    z_plus = array('i')
-    z_minus = array('i')
+    z_plus = []
+    z_minus = []
 
     for word in context:
-        plus = array('i')
-        minus = array('i')
+        plus = []
+        minus = []
 
         # Check if the current context word is in the
         # infobox.
-        start_t = time.time()
         if word in tableidx:
             # Collect the list of occurances of the word.
             # across fields.
@@ -594,7 +694,6 @@ def local_context(context, tableidx, l, field2idx, word_max_fields):
             plus.append(pos)
             minus.append(pos)
 
-        duration_t = time.time() - start_t
         # After filling up the word indices, we could end
         # with two possibilities
         # 1. Fewer than word_max_fields indices
@@ -619,9 +718,6 @@ def local_context(context, tableidx, l, field2idx, word_max_fields):
 
         z_plus.extend(plus)
         z_minus.extend(minus)
-
-    # print "Time for computing index %0.5f s" % (duration_idx)
-    # print "Time for one loop in each word %0.5f s" % (duration_t)
 
     return np.array(z_plus), np.array(z_minus)
 
@@ -655,13 +751,13 @@ def setup(data_dir, embed_dir, n, batch_size, nW, min_field_freq, nQ):
 
     create_dataset(data_dir, 'valid', n, batch_size)
 
-    word2idx = w_index(embed_dir, nW)
+    word2idx, word_set = w_index(embed_dir, nW)
     field2idx, nF = field_vocab(data_dir, 'train', min_field_freq)
     qword2idx = qword_vocab(data_dir, 'train', nQ)
 
     max_words_in_table = get_max_words_in_table(data_dir, 'train')
 
-    return word2idx, field2idx, qword2idx, nF, max_words_in_table
+    return word2idx, field2idx, qword2idx, nF, max_words_in_table, word_set
 
 
 class DataSet(object):
@@ -669,8 +765,8 @@ class DataSet(object):
 
     """
     def __init__(self, data_dir, dataset, n, nW, nF, nQ, l, batch_size,
-                 word2idx, field2idx, qword2idx, max_words, max_fields,
-                 word_max_fields, max_words_in_table):
+                 word2idx, field2idx, qword2idx, max_fields,
+                 word_max_fields, max_words_in_table, word_set):
         self._dataset = dataset
         self._batch_size = batch_size
         self._n = n
@@ -678,6 +774,7 @@ class DataSet(object):
         self._nW = nW
         self._nF = nF
         self._nQ = nQ
+        self._word_set = word_set
 
         # Set up the indexes
         self._word2idx = word2idx
@@ -685,8 +782,6 @@ class DataSet(object):
         self._qword2idx = qword2idx
 
         # Parameters for global and local contexts
-        # Max. words in an infobox
-        self._max_words = max_words
         # Max. fields in an infobox
         self._max_fields = max_fields
         # Max. words per field
@@ -754,6 +849,7 @@ class DataSet(object):
         table_num = self._ys[idx]
         table = self._tables[table_num]
         words = sentence.split()
+        ws = self._word_set
 
         contexts = []
         labels = []
@@ -763,7 +859,7 @@ class DataSet(object):
         z_minus = []
 
         twords = table_words(table)
-        wq2idx, _ = resize_index(self._word2idx, twords)
+        wq2idx = resize_index(self._word2idx, ws, twords)
         q_proj = project_copy_scores(self._max_words_in_table, self._nW,
                                      wq2idx, twords)
 
@@ -782,7 +878,6 @@ class DataSet(object):
             next_word.extend([next_word[-1]] *
                              (self._batch_size - len(next_word)))
 
-        start_ct = time.time()
         # Map words in the context to the vocabulary position.
         for context in contexts:
             ctxt = []
@@ -792,9 +887,7 @@ class DataSet(object):
                 else:
                     ctxt.append(self._word2idx['<unk>'])
             ct.append(ctxt)
-        duration_ct = time.time() - start_ct
 
-        start_label = time.time()
         # Map the target words into words from the output
         # vocabulary. These can be outside the word2idx as
         # well.
@@ -803,28 +896,21 @@ class DataSet(object):
                 labels.append(wq2idx[word])
             else:
                 labels.append(wq2idx['<unk>'])
-        duration_label = time.time() - start_label
 
-        start_z = time.time()
         tableidx = table_idx(table)
+        words = sentence.split()
+        zp_dict, zm_dict = local_context_precompute(words, tableidx, self._l,
+                                                    self._field2idx,
+                                                    self._word_max_fields)
         # Compute the local contexts for each context.
         for context in contexts:
-            zp, zm = local_context(context, tableidx, self._l,
-                                   self._field2idx, self._word_max_fields)
+            zp, zm = local_context(context, zp_dict, zm_dict)
             z_plus.append(zp)
             z_minus.append(zm)
-        duration_z = time.time() - start_z
 
-        start_g = time.time()
         # Get the global context for the given table.
-        gf, gw = global_context(table, self._max_fields, self._max_words,
+        gf, gw = global_context(table, self._max_fields, self._max_words_in_table,
                                 self._field2idx, self._qword2idx)
-        duration_g = time.time() - start_g
-
-        # print "Time for context : %0.5f" % (duration_ct)
-        # print "Time for label : %0.5f" % (duration_label)
-        # print "Time for local: %0.5f" % (duration_z)
-        # print "Time for global: %0.5f" % (duration_g)
 
         # Make batch_size many copies of the global
         # conditioning entries.
@@ -846,9 +932,10 @@ class DataSet(object):
             context for input to predict the next word.
         """
         # Read the table
+        ws = self._word_set
         table = self._tables[pos]
         twords = table_words(table)
-        wq2idx, idx2wq = resize_index(self._word2idx, twords)
+        wq2idx, idx2wq = resize_index(self._word2idx, ws, twords, test=True)
         q_proj = project_copy_scores(self._max_words_in_table,
                                      self._nW, wq2idx, twords)
         copy = getcopyaction(table, self._word_max_fields, self._field2idx)
@@ -869,11 +956,12 @@ class DataSet(object):
 
         tableidx = table_idx(table)
         # Generate the local conditioning variables.
-        zp, zm = local_context(self._context, tableidx, self._l,
-                               self._field2idx, self._word_max_fields)
+        zp, zm = local_context_test(self._context, tableidx, self._l,
+                                    self._field2idx, self._word_max_fields)
 
         # Generate the global conditioning lookups.
-        gf, gw = global_context(table, self._max_fields, self._max_words,
+        gf, gw = global_context(table, self._max_fields,
+                                self._max_words_in_table,
                                 self._field2idx, self._qword2idx)
         # next_word - Dummy position.
         # not used.
