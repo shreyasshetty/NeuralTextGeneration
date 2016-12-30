@@ -38,6 +38,7 @@ flags.DEFINE_integer("nQpr", 1000, "Dummy")
 # Experiment parameters
 flags.DEFINE_integer("num_epochs", 10, "Number of epochs [10]")
 flags.DEFINE_integer("batch_size", 32, "Batch size for SGD [32]")
+flags.DEFINE_string("xavier", "True", "Initialize using Xavier initialization[True]")
 flags.DEFINE_integer("print_every", 100, "Print out the training loss every #steps [100]")
 flags.DEFINE_integer("sample_every", 1000, "Sample sentences every #steps [1000]")
 flags.DEFINE_integer("test_every", 1000, "Test after every #steps [1000]")
@@ -114,7 +115,8 @@ def main(_):
         model = CopyAttention(FLAGS.n, FLAGS.d, FLAGS.g, FLAGS.nhu,
                               FLAGS.nW, nF, FLAGS.nQ, FLAGS.l,
                               FLAGS.learning_rate, max_words_in_table,
-                              FLAGS.max_fields, FLAGS.word_max_fields)
+                              FLAGS.max_fields, FLAGS.word_max_fields,
+                              FLAGS.xavier)
 
         # Placeholders for train and validation
         context_pl, zp_pl, zm_pl, gf_pl, gw_pl, next_pl, copy_pl, proj_pl = \

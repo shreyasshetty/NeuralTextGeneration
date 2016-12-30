@@ -1,5 +1,6 @@
 # pylint: disable=missing-docstring
 import tensorflow as tf
+import numpy as np
 
 from input_data import get_hpca_embeddings
 
@@ -10,7 +11,7 @@ class CopyAttention(object):
     """
     def __init__(self, n, d, g, nhu, nW, nF, nQ,
                  l, lr, max_words, max_fields,
-                 word_max_fields):
+                 word_max_fields, xavier=True):
         """ Initialize the CopyAttention model.
 
         Args:
@@ -27,6 +28,8 @@ class CopyAttention(object):
             max_fields         : Max. fields in a table.
             word_max_fields    : Max. num of fields a word
                                  can appear.
+            xavier             : Initialize using Xavier
+                                 initialization
         """
         print "Initializing the CopyAttention model"
 
@@ -59,70 +62,157 @@ class CopyAttention(object):
             # start(p) and end(n) embeddings for field i given by
             # positions
             # i*2*l + p, i*2*l + l + n respectively
-            self._Z_plus = tf.get_variable("zplus_embedding",
-                                           shape=[l*nF, d],
+            if xavier:
+                # Local conditioning embeddings.
+                self._Z_plus = tf.get_variable("zplus_embedding",
+                                               shape=[l*nF, d],
+                                               initializer=
+                                               tf.contrib.layers.xavier_initializer())
+                self._Z_minus = tf.get_variable("zminus_embedding",
+                                                shape=[l*nF, d],
+                                                initializer=
+                                                tf.contrib.layers.xavier_initializer())
+
+                # Global conditioning embeddings.
+                # Global field conditioning.
+                self._Gf = tf.get_variable("global_field_embedding",
+                                           shape=[nF, g],
                                            initializer=
                                            tf.contrib.layers.xavier_initializer())
-            self._Z_minus = tf.get_variable("zminus_embedding",
-                                            shape=[l*nF, d],
-                                            initializer=
-                                            tf.contrib.layers.xavier_initializer())
 
-            # Global conditioning embeddings.
-            # Global field conditioning.
-            self._Gf = tf.get_variable("global_field_embedding",
-                                       shape=[nF, g],
-                                       initializer=
-                                       tf.contrib.layers.xavier_initializer())
+                # Global word conditioning.
+                # NOTE: Here we differ from the paper
+                #       Section 4.1: Table embeddings
+                #       We define Gw to be a matrix of dimension (nQ,g)
+                #       rather than nWxg to account for differences in
+                #       vocabularies
+                self._Gw = tf.get_variable("global_word_embedding",
+                                           shape=[nQ, g],
+                                           initializer=
+                                           tf.contrib.layers.xavier_initializer())
 
-            # Global word conditioning.
-            # NOTE: Here we differ from the paper
-            #       Section 4.1: Table embeddings
-            #       We define Gw to be a matrix of dimension (nQ,g)
-            #       rather than nWxg to account for differences in
-            #       vocabularies
-            self._Gw = tf.get_variable("global_word_embedding",
-                                       shape=[nQ, g],
-                                       initializer=
-                                       tf.contrib.layers.xavier_initializer())
+                # Copy actions embedding.
+                # Contiguous set of l embeddings correspond to a field
+                # Field j position i indexed by j*l + i
+                self._F_ji = tf.get_variable("copy_action_embedding",
+                                             shape=[l*nF, d],
+                                             initializer=
+                                             tf.contrib.layers.xavier_initializer())
 
-            # Copy actions embedding.
-            # Contiguous set of l embeddings correspond to a field
-            # Field j position i indexed by j*l + i
-            self._F_ji = tf.get_variable("copy_action_embedding",
-                                         shape=[l*nF, d],
-                                         initializer=
-                                         tf.contrib.layers.xavier_initializer())
+            else:
+                # Local conditioning embeddings.
+                w_range = np.sqrt(6)/(l*nF + d)
+                self._Z_plus = tf.Variable(tf.random_uniform([l*nF, d],
+                                                             minval=-w_range,
+                                                             maxval=w_range),
+                                           name="zplus_embedding",
+                                           trainable=True)
+                self._Z_minus = tf.Variable(tf.random_uniform([l*nF, d],
+                                                              minval=-w_range,
+                                                              maxval=w_range),
+                                            name="zminus_embedding",
+                                            trainable=True)
+
+                # Global conditioning embeddings.
+                # Global field conditioning.
+                gf_range = np.sqrt(6)/(nF + g)
+                self._Gf = tf.Variable(tf.random_uniform([nF, g],
+                                                         minval=-gf_range,
+                                                         max_val=gf_range),
+                                       name="global_field_embedding",
+                                       trainable=True)
+
+                # Global word conditioning.
+                # NOTE: Here we differ from the paper
+                #       Section 4.1: Table embeddings
+                #       We define Gw to be a matrix of dimension (nQ,g)
+                #       rather than nWxg to account for differences in
+                #       vocabularies
+                gw_range = np.sqrt(6)/(nQ + g)
+                self._Gw = tf.Variable(tf.random_uniform([nQ, g],
+                                                         minval=-gw_range,
+                                                         max_val=gw_range),
+                                       name="global_word_embedding",
+                                       trainable=True)
+
+                # Copy actions embedding.
+                # Contiguous set of l embeddings correspond to a field
+                # Field j position i indexed by j*l + i
+                fji_range = np.sqrt(6)/(l*nF + d)
+                self._F_ji = tf.Variable(tf.random_uniform([l*nF, d],
+                                                           minval=-fji_range,
+                                                           maxval=fji_range),
+                                         name="copy_action_embedding",
+                                         trainable=True)
 
         with tf.name_scope("hidden_layer"):
             # Weights and biases
-            self._W_2 = tf.get_variable("hidden_layer_weights",
-                                        shape=[d_1, nhu],
-                                        initializer=
-                                        tf.contrib.layers.xavier_initializer())
-            self._b_2 = tf.Variable(tf.zeros([nhu]),
-                                    name="input_layer_biases",
-                                    trainable=True)
+            if xavier:
+                self._W_2 = tf.get_variable("hidden_layer_weights",
+                                            shape=[d_1, nhu],
+                                            initializer=
+                                            tf.contrib.layers.xavier_initializer())
+                self._b_2 = tf.Variable(tf.zeros([nhu]),
+                                        name="input_layer_biases",
+                                        trainable=True)
+            else:
+                w2_range = np.sqrt(6)/(d_1 + nhu)
+                self._W_2 = tf.Variable(tf.random_uniform([d_1, nhu],
+                                                          minval=-w2_range,
+                                                          max_val=w2_range),
+                                        name="hidden_layer_weights",
+                                        trainable=True)
+                self._b_2 = tf.Variable(tf.random_uniform([nhu],
+                                                          minval=-w2_range,
+                                                          maxval=w2_range),
+                                        name="input_layer_biases",
+                                        trainable=True)
 
         with tf.name_scope("output_layer"):
             # Weights and biases
-            self._W_3 = tf.get_variable("output_layer_weights",
-                                        shape=[nhu, nW],
-                                        initializer=
-                                        tf.contrib.layers.xavier_initializer())
-            self._b_3 = tf.Variable(tf.zeros([nW]),
-                                    name="output_layer_biases",
-                                    trainable=True)
+            if xavier:
+                self._W_3 = tf.get_variable("output_layer_weights",
+                                            shape=[nhu, nW],
+                                            initializer=
+                                            tf.contrib.layers.xavier_initializer())
+                self._b_3 = tf.Variable(tf.zeros([nW]),
+                                        name="output_layer_biases",
+                                        trainable=True)
+            else:
+                w3_range = np.sqrt(6)/(nW + nhu)
+                self._W_3 = tf.Variable(tf.random_uniform([nhu, nW],
+                                                          minval=w3_range,
+                                                          maxval=-w3_range),
+                                        name="output_layer_weights",
+                                        trainable=True)
+                self._b_3 = tf.Variable(tf.random_uniform([nW],
+                                                          minval=-w3_range,
+                                                          maxval=w3_range),
+                                        name="output_layer_biases",
+                                        trainable=True)
 
         with tf.name_scope("copy_action"):
             # Copy action weights and biases
-            self._W_4 = tf.get_variable("copy_action_weights",
-                                        shape=[d, nhu],
-                                        initializer=
-                                        tf.contrib.layers.xavier_initializer())
-            self._b_4 = tf.Variable(tf.zeros([nhu]),
-                                    name="copy_action_biases",
-                                    trainable=True)
+            if xavier:
+                self._W_4 = tf.get_variable("copy_action_weights",
+                                            shape=[d, nhu],
+                                            initializer=
+                                            tf.contrib.layers.xavier_initializer())
+                self._b_4 = tf.Variable(tf.zeros([nhu]),
+                                        name="copy_action_biases",
+                                        trainable=True)
+            else:
+                w4_range = np.sqrt(6)/(d + nhu)
+                self._W_4 = tf.Variable(tf.random_uniform([d, nhu],
+                                                          minval=-w4_range,
+                                                          maxval=w4_range),
+                                        name="copy_action_weights",
+                                        trainable=True)
+                self._b_4 = tf.Variable(tf.random_uniform([nhu],
+                                                          minval=-w4_range,
+                                                          maxval=w4_range),
+                                        name="copy_action_biases",
+                                        trainable=True)
 
         print "Done initializing the CopyAttention model"
 
