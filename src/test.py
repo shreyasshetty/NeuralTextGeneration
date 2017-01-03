@@ -152,11 +152,11 @@ def main(_):
         #sess.run(init)
 
         start_g = time.time()
-        test_dataset.reset_context()
         num_test_boxes = test_dataset.num_infoboxes()
         res_path = os.path.join('../experiment/', '15', 'generated.txt')
         with open(res_path, 'a') as exp:
             for k in range(num_test_boxes):
+                test_dataset.reset_context()
                 pos = 0
                 len_sent = 0
                 prev_predict = word2idx['<start>']
