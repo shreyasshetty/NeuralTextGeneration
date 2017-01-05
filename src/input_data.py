@@ -677,8 +677,10 @@ def local_context_test(context, tableidx, l, field2idx, word_max_fields):
                 # Account for the corner case the we might
                 # have some word beyond 'l' distance
                 # We just ignore if that is the case
-                if start > l or end > l:
-                    pass
+                if start > l:
+                    start = l
+                if end > l:
+                    end = l
 
                 if name in field2idx:
                     pos = field2idx[name]
