@@ -111,6 +111,9 @@ def main(_):
     # Generate the TensorFlow graph
     with tf.Graph().as_default():
 
+        #Set the random seed for reproducibility
+        tf.set_random_seed(1234)
+
         # Create the CopyAttention model
         model = CopyAttention(FLAGS.n, FLAGS.d, FLAGS.g, FLAGS.nhu,
                               FLAGS.nW, nF, FLAGS.nQ, FLAGS.l,
